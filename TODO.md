@@ -1,6 +1,6 @@
 # ALGO TRADE CODEX — Yapılacaklar Listesi
 
-Son güncelleme: 2026-03-06
+Son güncelleme: 2026-03-06 (Oturum 2)
 Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
@@ -19,14 +19,14 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 - [x] GitHub'a bağlandı ve push edildi → github.com/lex-pixel/algo-trade-corex
 - [x] `SESSION_LOG.md` oluşturuldu (oturum takibi)
 
+### Tamamlananlar (Oturum 2) ✅
+- [x] `utils/logger.py` — loguru tabanlı merkezi log sistemi (terminal + 3 dosya)
+- [x] `strategies/rsi_strategy.py` — RSI Mean Reversion stratejisi (pandas-ta)
+- [x] `tests/test_strategies.py` — 24 unit test, 24/24 PASSED
+
 ### Bekleyenler ⏳
-- [ ] **Sanal ortam kur** → `python -m venv venv` sonra `venv\Scripts\activate`
-- [ ] **Paketleri yükle** → `pip install -r requirements.txt`
-- [ ] **HelloStrategy test çalıştır** → `python strategies/hello_strategy.py`
-- [ ] **Logger modülü** → `utils/logger.py` (loguru ile merkezi log sistemi)
-- [ ] **OOP derinleştir** → `strategies/rsi_strategy.py` (RSIStrategy: BaseStrategy'den türeyen ilk gerçek strateji)
-- [ ] **Unit test yaz** → `tests/test_base_strategy.py` (pytest ile)
 - [ ] **YAML konfigürasyon** → `config/settings.yaml` + pydantic doğrulama
+- [ ] **Sanal ortam** → `python -m venv venv` (izole paket yönetimi için)
 
 ---
 
