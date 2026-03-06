@@ -20,6 +20,9 @@ AMACI:
 import pandas as pd
 import numpy as np
 from strategies.base_strategy import BaseStrategy, Signal
+from utils.logger import get_logger
+
+logger = get_logger(__name__)   # __name__ = "strategies.hello_strategy"
 
 
 class HelloStrategy(BaseStrategy):
@@ -59,28 +62,33 @@ class HelloStrategy(BaseStrategy):
 
         if pct_change > self.threshold:
             # Fiyat yükseliyor → AL
-            return Signal(
+            signal = Signal(
                 action="AL",
                 confidence=confidence,
                 stop_loss=last_close * (1 - stop_loss_pct),
                 take_profit=last_close * (1 + take_profit_pct),
-                reason=f"Fiyat %{pct_change*100:.3f} arttı (eşik: %{self.threshold*100:.1f})"
+                reason=f"Fiyat %{pct_change*100:.3f} artti (esik: %{self.threshold*100:.1f})"
             )
+            logger.info(f"Sinyal: AL | {self.symbol} | Fiyat: {last_close:,.2f} | Guven: {confidence:.2f}")
+            return signal
         elif pct_change < -self.threshold:
             # Fiyat düşüyor → SAT
-            return Signal(
+            signal = Signal(
                 action="SAT",
                 confidence=confidence,
                 stop_loss=last_close * (1 + stop_loss_pct),
                 take_profit=last_close * (1 - take_profit_pct),
-                reason=f"Fiyat %{abs(pct_change)*100:.3f} düştü (eşik: %{self.threshold*100:.1f})"
+                reason=f"Fiyat %{abs(pct_change)*100:.3f} dustu (esik: %{self.threshold*100:.1f})"
             )
+            logger.info(f"Sinyal: SAT | {self.symbol} | Fiyat: {last_close:,.2f} | Guven: {confidence:.2f}")
+            return signal
         else:
             # Değişim çok küçük → BEKLE
+            logger.debug(f"Sinyal: BEKLE | Degisim %{abs(pct_change)*100:.3f} < esik %{self.threshold*100:.1f}")
             return Signal(
                 action="BEKLE",
                 confidence=0.0,
-                reason=f"Değişim eşik altında: %{abs(pct_change)*100:.3f} < %{self.threshold*100:.1f}"
+                reason=f"Degisim esik altinda: %{abs(pct_change)*100:.3f} < %{self.threshold*100:.1f}"
             )
 
 
