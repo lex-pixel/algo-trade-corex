@@ -1,0 +1,50 @@
+# =============================================
+# ALGO TRADE CODEX — .gitignore
+# Bu dosya: GitHub'a gönderilmemesi gereken
+# dosya ve klasörleri tanımlar.
+# =============================================
+
+# --- GİZLİ BİLGİLER (KESİNLİKLE GÖNDERİLMEZ) ---
+.env                  # API key'lerin bulunduğu dosya — asla commit etme
+*.key
+*.pem
+secrets.json
+
+# --- PYTHON ---
+__pycache__/          # Python'un otomatik oluşturduğu önbellek klasörü
+*.py[cod]             # Derlenmiş Python dosyaları
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/                 # Sanal ortam klasörü — her bilgisayarda ayrı kurulur
+.venv/
+env/
+
+# --- VERİ DOSYALARI (çok büyük olabilir) ---
+data/raw/             # Ham borsa verisi
+data/processed/       # İşlenmiş veri
+*.parquet
+*.csv
+*.h5
+
+# --- ML MODEL DOSYALARI ---
+ml/models/            # Eğitilmiş model ağırlıkları
+*.pkl
+*.joblib
+mlruns/               # MLflow deney kayıtları (büyük olabilir)
+
+# --- LOG DOSYALARI ---
+logs/
+*.log
+
+# --- IDE VE OS ---
+.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- DOCKER ---
+.docker/

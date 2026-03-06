@@ -1,0 +1,66 @@
+# =============================================
+# ALGO TRADE CODEX — requirements.txt
+# Kurulum: pip install -r requirements.txt
+#
+# KATMAN KATMAN NE İŞE YARAR:
+# =============================================
+
+# --- VERİ ÇEKME VE BORSA BAĞLANTISI ---
+ccxt==4.3.89                  # 100+ borsa için tek API (Binance, Bybit, vb.)
+aiohttp==3.9.5                # Async HTTP istekleri (WebSocket için)
+websockets==12.0              # Gerçek zamanlı fiyat akışı
+
+# --- VERİ İŞLEME ---
+pandas==2.2.2                 # DataFrame — botun ana veri yapısı
+numpy==1.26.4                 # Hızlı matematiksel hesaplamalar
+pyarrow==16.1.0               # Parquet formatında veri kaydetme (çok hızlı)
+
+# --- TEKNİK ANALİZ ---
+pandas-ta==0.3.14b0           # 130+ teknik indikatör (RSI, MACD, BB, ATR...)
+TA-Lib==0.4.28                # Profesyonel TA kütüphanesi (C ile yazılmış, hızlı)
+
+# --- VERİTABANI ---
+SQLAlchemy==2.0.30            # Python ORM — SQL yazmadan veritabanı işlemleri
+psycopg2-binary==2.9.9        # PostgreSQL/TimescaleDB bağlantı sürücüsü
+redis==5.0.4                  # Redis önbellek bağlantısı
+
+# --- BACKTESTING VE OPTİMİZASYON ---
+backtrader==1.9.78.123        # Strateji geri testi framework'ü
+vectorbt==0.26.2              # Hızlı vektörleştirilmiş backtest
+optuna==3.6.1                 # Bayesian parametre optimizasyonu
+
+# --- MAKİNE ÖĞRENMESİ ---
+xgboost==2.1.0                # Sinyal sınıflandırıcı (AL/SAT/BEKLE)
+torch==2.3.1                  # LSTM fiyat tahmin modeli
+scikit-learn==1.5.0           # ML yardımcı araçlar (cross-validation, preprocessing)
+shap==0.45.1                  # Hangi özellik ne kadar önemli? (model yorumlanabilirliği)
+mlflow==2.13.2                # ML deney takibi (hangi model, hangi parametre, hanç sonuç)
+
+# --- ASYNC VE AĞ ---
+asyncio-mqtt==0.16.2          # Async MQTT (isteğe bağlı)
+
+# --- RİSK SİSTEMİ ---
+# Risk motoru özel yazılıyor (custom), ccxt üzerinden emir yönetimi
+
+# --- LOGLAMA VE HATA TAKİBİ ---
+loguru==0.7.2                 # Python logging'den çok daha güçlü log sistemi
+sentry-sdk==2.5.1             # Canlı hata takibi ve uyarılar
+
+# --- BİLDİRİM ---
+python-telegram-bot==21.3     # Telegram bot — emir/alarm bildirimleri
+
+# --- İZLEME ---
+prometheus-client==0.20.0     # Metrik toplama (Grafana'ya veri gönderir)
+
+# --- DEVOPS VE YAPILANDIRMA ---
+python-dotenv==1.0.1          # .env dosyasından ortam değişkeni okuma
+pydantic==2.7.4               # Konfigürasyon doğrulama (tip güvenli YAML okuma)
+pyyaml==6.0.1                 # YAML dosyası okuma/yazma
+
+# --- GELİŞTİRME ARAÇLARI ---
+pytest==8.2.2                 # Test framework'ü
+pytest-asyncio==0.23.7        # Async fonksiyonları test etmek için
+black==24.4.2                 # Otomatik kod formatlama (PEP 8)
+flake8==7.0.0                 # Kod kalitesi kontrolü
+mypy==1.10.0                  # Statik tip kontrolü
+rich==13.7.1                  # Terminalde renkli ve güzel çıktı
