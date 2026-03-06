@@ -1,0 +1,129 @@
+# ALGO TRADE CODEX — Yapılacaklar Listesi
+
+Son güncelleme: 2026-03-06
+Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
+
+---
+
+## PHASE 1 — Altyapı Kurulumu & Python Temelleri
+
+### Tamamlananlar ✅
+- [x] Proje klasör yapısı oluşturuldu (data, strategies, trading, ml, risk, monitoring, tests, config, utils, logs)
+- [x] Her klasöre `__init__.py` eklendi
+- [x] `.gitignore` oluşturuldu (API key, veri, model dosyaları korunuyor)
+- [x] `.env.example` oluşturuldu (Binance/Bybit testnet şablonu)
+- [x] `requirements.txt` oluşturuldu (tüm bağımlılıklar açıklamalı)
+- [x] `strategies/base_strategy.py` — BaseStrategy soyut sınıfı + Signal dataclass
+- [x] `strategies/hello_strategy.py` — İlk test stratejisi (momentum tabanlı)
+- [x] Git başlatıldı, ilk commit atıldı
+- [x] GitHub'a bağlandı ve push edildi → github.com/lex-pixel/algo-trade-corex
+- [x] `SESSION_LOG.md` oluşturuldu (oturum takibi)
+
+### Bekleyenler ⏳
+- [ ] **Sanal ortam kur** → `python -m venv venv` sonra `venv\Scripts\activate`
+- [ ] **Paketleri yükle** → `pip install -r requirements.txt`
+- [ ] **HelloStrategy test çalıştır** → `python strategies/hello_strategy.py`
+- [ ] **Logger modülü** → `utils/logger.py` (loguru ile merkezi log sistemi)
+- [ ] **OOP derinleştir** → `strategies/rsi_strategy.py` (RSIStrategy: BaseStrategy'den türeyen ilk gerçek strateji)
+- [ ] **Unit test yaz** → `tests/test_base_strategy.py` (pytest ile)
+- [ ] **YAML konfigürasyon** → `config/settings.yaml` + pydantic doğrulama
+
+---
+
+## PHASE 2 — Veri Katmanı (3–4 Hafta)
+
+- [ ] CCXT kurulumu ve Binance Testnet API bağlantısı
+- [ ] `data/fetcher.py` → REST API ile tarihsel OHLCV verisi çekme
+- [ ] `data/ws_listener.py` → WebSocket ile gerçek zamanlı fiyat dinleme (asyncio)
+- [ ] `data/cleaner.py` → Veri temizleme pipeline (eksik değer, anomali, timestamp)
+- [ ] 3 yıllık BTC/ETH/SOL 1h verisi indirme ve Parquet'e kaydetme
+- [ ] TimescaleDB Docker kurulumu + şema oluşturma
+- [ ] `data/database.py` → DataFrame'den DB'ye yazma ve sorgulama
+- [ ] Redis kurulumu + `data/cache.py` → son 500 mumu önbellekleme
+- [ ] `tests/test_fetcher.py` → veri kalitesi test scripti
+
+---
+
+## PHASE 3 — Strateji ve Sinyal Motoru (3–4 Hafta)
+
+- [ ] `strategies/indicators.py` → pandas-ta ile tüm indikatörler (RSI, MACD, BB, ATR, ADX)
+- [ ] `strategies/regime_detector.py` → MarketRegimeDetector (ADX ile Trend/Range/Geçiş)
+- [ ] `strategies/pa_range_strategy.py` → PA Range Stratejisi (destek/direnç + RSI filtre)
+- [ ] `strategies/rsi_strategy.py` → RSI Mean Reversion (aşırı alım/satım sinyalleri)
+- [ ] Sinyal kombinasyonu → birden fazla strateji + filtre mantığı
+- [ ] Sinyal log sistemi → her sinyal timestamp + güven skoru ile kaydedilir
+- [ ] `config/settings.yaml` → strateji parametreleri YAML tabanlı
+- [ ] `tests/test_strategies.py` → her strateji sınıfı için unit test
+
+---
+
+## PHASE 4 — Backtesting ve Optimizasyon (4–5 Hafta)
+
+- [ ] Backtrader entegrasyonu → stratejileri `bt.Strategy`'e dönüştür
+- [ ] Gerçekçi maliyet modeli → komisyon %0.1 + slipaj %0.05 + gecikme ±200ms
+- [ ] Performans metrikleri → Sharpe, Sortino, Max Drawdown, Win Rate
+- [ ] Walk-Forward Optimization framework
+- [ ] `optimization/optuna_optimizer.py` → Bayesian parametre optimizasyonu
+- [ ] Monte Carlo simülasyonu → 1000 senaryo, trade sırası karıştırma
+- [ ] Overfitting tespiti → parametre duyarlılık analizi
+- [ ] Backtest rapor oluşturucu → HTML otomatik rapor
+
+---
+
+## PHASE 5 — ML / AI Modeli (4–5 Hafta)
+
+- [ ] `ml/feature_engineering.py` → 50+ teknik indikatör + lag + rolling stats
+- [ ] Lookahead bias önlemi → TimeSeriesSplit cross-validation
+- [ ] `ml/xgboost_model.py` → XGBoost sınıflandırıcı (AL/SAT/BEKLE)
+- [ ] SHAP analizi → hangi özellik ne kadar önemli?
+- [ ] MLflow entegrasyonu → tüm deneyleri kaydet
+- [ ] Walk-forward ML validation → model sürüklenme tespiti
+- [ ] `ml/predictor.py` → canlı predict() fonksiyonu
+- [ ] A/B test → ML sinyalli vs kural bazlı karşılaştırma
+
+---
+
+## PHASE 6 — Canlı İşlem Altyapısı (3–4 Hafta)
+
+- [ ] `trading/main_loop.py` → async trading loop (asyncio.gather)
+- [ ] `trading/order_manager.py` → OrderManager (emir gönder, takip et, iptal et)
+- [ ] `trading/position_tracker.py` → PositionTracker (açık pozisyonlar + P&L)
+- [ ] Paper trading modu → gerçek API, sahte emir
+- [ ] 2 hafta paper trading — performans kaydet
+- [ ] `monitoring/telegram_notifier.py` → Telegram bildirim sistemi
+- [ ] Hata yönetimi + otomatik yeniden bağlanma
+- [ ] Audit trail → her kararı timestamp'li logla
+
+---
+
+## PHASE 7 — Risk Sistemi ve Güvenlik (2–3 Hafta)
+
+- [ ] `risk/risk_manager.py` → RiskManager (pozisyon boyutu + kill switch)
+- [ ] `risk/position_sizer.py` → Kelly + ATR tabanlı dinamik boyutlandırma
+- [ ] `risk/kill_switch.py` → 3 seviyeli alarm (Sarı %3 / Turuncu %5 / Kırmızı %15)
+- [ ] Portföy korelasyon monitörü
+- [ ] API arıza protokolü → bağlantı kopunca market order ile kapat
+- [ ] Güvenlik: .env API key yönetimi + IP whitelist
+- [ ] Sunucu güvenliği: UFW, SSH key, fail2ban
+- [ ] Risk sistemi entegrasyon testleri
+
+---
+
+## PHASE 8 — İzleme, Analiz ve Sürekli İyileştirme (Sürekli)
+
+- [ ] Docker Compose → tüm servisleri ayağa kaldır (bot + DB + Redis + Grafana)
+- [ ] Grafana + Prometheus → canlı P&L, sinyal akışı, API sağlık paneli
+- [ ] Model drift monitörü → Evidently AI
+- [ ] `scripts/weekly_review.py` → haftalık strateji review scripti
+- [ ] Aylık performans raporu otomasyon scripti
+- [ ] Yeni strateji A/B test pipeline
+- [ ] `.github/workflows/main.yml` → CI/CD (GitHub Actions: test + Docker build + deploy)
+
+---
+
+## Notlar
+
+- Borsa: Binance Testnet (sahte para) → live'a geçince `.env`'de `BINANCE_TESTNET=false`
+- Python: 3.12.3 (rapor 3.11 diyor ama 3.12 uyumlu)
+- Proje dizini: `C:\Users\rk209\Desktop\Cloud-Algo\`
+- GitHub: github.com/lex-pixel/algo-trade-corex
