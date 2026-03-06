@@ -1,6 +1,6 @@
 # ALGO TRADE CODEX — Yapılacaklar Listesi
 
-Son güncelleme: 2026-03-06 (Oturum 2)
+Son güncelleme: 2026-03-06 (Oturum 3)
 Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
@@ -24,23 +24,20 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 - [x] `strategies/rsi_strategy.py` — RSI Mean Reversion stratejisi (pandas-ta)
 - [x] `tests/test_strategies.py` — 24 unit test, 24/24 PASSED
 
-### Bekleyenler ⏳
-- [ ] **YAML konfigürasyon** → `config/settings.yaml` + pydantic doğrulama
-- [ ] **Sanal ortam** → `python -m venv venv` (izole paket yönetimi için)
+### Tamamlananlar (Oturum 3) ✅
+- [x] `config/settings.yaml` + `config/loader.py` — pydantic doğrulamalı YAML konfigürasyon
+- [x] `main.py` — gerçek Testnet verisiyle çalışır hale getirildi
 
 ---
 
-## PHASE 2 — Veri Katmanı (3–4 Hafta)
+## PHASE 2 — Veri Katmanı ✅
 
-- [ ] CCXT kurulumu ve Binance Testnet API bağlantısı
-- [ ] `data/fetcher.py` → REST API ile tarihsel OHLCV verisi çekme
-- [ ] `data/ws_listener.py` → WebSocket ile gerçek zamanlı fiyat dinleme (asyncio)
-- [ ] `data/cleaner.py` → Veri temizleme pipeline (eksik değer, anomali, timestamp)
-- [ ] 3 yıllık BTC/ETH/SOL 1h verisi indirme ve Parquet'e kaydetme
-- [ ] TimescaleDB Docker kurulumu + şema oluşturma
-- [ ] `data/database.py` → DataFrame'den DB'ye yazma ve sorgulama
-- [ ] Redis kurulumu + `data/cache.py` → son 500 mumu önbellekleme
-- [ ] `tests/test_fetcher.py` → veri kalitesi test scripti
+- [x] CCXT kurulumu ve Binance Testnet API bağlantısı
+- [x] `data/fetcher.py` → REST API ile OHLCV verisi çekme (200 gerçek BTC/USDT mumu test edildi)
+- [x] `data/cleaner.py` → Veri temizleme pipeline (NaN, duplikat, anomali, OHLC mantık)
+- [x] `tests/test_fetcher.py` → 21/21 PASSED
+- [ ] `data/ws_listener.py` → WebSocket (Phase 6'ya ertelendi)
+- [ ] TimescaleDB / Redis → (Phase 6'ya ertelendi)
 
 ---
 

@@ -82,11 +82,16 @@ class RSIConfig(BaseModel):
 
 
 class PARangeConfig(BaseModel):
-    enabled:         bool  = False
-    lookback:        int   = Field(default=50, ge=10, le=500)
-    rsi_period:      int   = Field(default=14, ge=2, le=100)
-    rsi_oversold:    float = Field(default=40.0)
-    rsi_overbought:  float = Field(default=60.0)
+    enabled:            bool  = True
+    lookback:           int   = Field(default=50, ge=10, le=500)
+    rsi_period:         int   = Field(default=14, ge=2, le=100)
+    rsi_oversold:       float = Field(default=40.0, ge=0, le=100)
+    rsi_overbought:     float = Field(default=60.0, ge=0, le=100)
+    proximity_pct:      float = Field(default=0.02, gt=0, le=0.2)
+    stop_pct:           float = Field(default=0.015, gt=0, le=0.1)
+    tp_pct:             float = Field(default=0.030, gt=0, le=0.5)
+    min_confidence:     float = Field(default=0.05, ge=0, le=1.0)
+    use_regime_filter:  bool  = True
 
 
 class StrategiesConfig(BaseModel):

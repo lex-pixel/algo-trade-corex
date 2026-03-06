@@ -25,12 +25,17 @@ strategies:
     tp_pct: 0.030           # Take-profit yüzdesi: %3.0
     min_confidence: 0.05    # Bu güven skorunun altındaki sinyaller işleme alınmaz
 
-  pa_range:                 # Phase 3'te eklenecek
-    enabled: false
-    lookback: 50
-    rsi_period: 14
-    rsi_oversold: 40
-    rsi_overbought: 60
+  pa_range:
+    enabled: true
+    lookback: 50            # Destek/direnç için kaç mum geriye bakılır
+    rsi_period: 14          # RSI periyodu
+    rsi_oversold: 40        # Bu değerin altı → desteğe yakınken AL
+    rsi_overbought: 60      # Bu değerin üstü → dirence yakınken SAT
+    proximity_pct: 0.02     # Desteğe/dirence %2 yakınlık eşiği
+    stop_pct: 0.015         # Stop-loss %1.5
+    tp_pct: 0.030           # Take-profit %3.0
+    min_confidence: 0.05    # Minimum güven skoru
+    use_regime_filter: true # ADX > 25 trend piyasada sinyali durdur
 
 # --- RİSK YÖNETİMİ ---
 risk:
