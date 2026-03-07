@@ -1,6 +1,6 @@
 # ALGO TRADE CODEX — Yapılacaklar Listesi
 
-Son güncelleme: 2026-03-06 (Oturum 3)
+Son güncelleme: 2026-03-07 (Oturum 4)
 Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
@@ -67,16 +67,15 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
 
-## PHASE 5 — ML / AI Modeli (4–5 Hafta)
+## PHASE 5 — ML / AI Modeli ✅
 
-- [ ] `ml/feature_engineering.py` → 50+ teknik indikatör + lag + rolling stats
-- [ ] Lookahead bias önlemi → TimeSeriesSplit cross-validation
-- [ ] `ml/xgboost_model.py` → XGBoost sınıflandırıcı (AL/SAT/BEKLE)
-- [ ] SHAP analizi → hangi özellik ne kadar önemli?
-- [ ] MLflow entegrasyonu → tüm deneyleri kaydet
-- [ ] Walk-forward ML validation → model sürüklenme tespiti
-- [ ] `ml/predictor.py` → canlı predict() fonksiyonu
-- [ ] A/B test → ML sinyalli vs kural bazlı karşılaştırma
+- [x] `ml/feature_engineering.py` → 52 teknik ozellik (lag, rolling, RSI/MACD/BB/ATR/ADX/hacim/momentum)
+- [x] Lookahead bias onlemi → TimeSeriesSplit cross-validation (n_splits=5)
+- [x] `ml/xgboost_model.py` → XGBoost siniflandirici (AL/SAT/BEKLE), SHAP destekli
+- [x] `ml/predictor.py` → canli predict(), ATR tabanli SL/TP, save/load
+- [x] `tests/test_phase5.py` → 35/35 PASSED (toplam 128/128)
+- [ ] MLflow entegrasyonu → (Phase 8'e ertelendi)
+- [ ] A/B test → ML sinyalli vs kural bazli → (Phase 8'e ertelendi)
 
 ---
 

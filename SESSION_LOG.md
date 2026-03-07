@@ -58,4 +58,29 @@ Cloud-Algo/
 
 ---
 
+## OTURUM 4 — 2026-03-07
+
+### Tamamlananlar
+
+**PHASE 5: ML / AI Modeli**
+
+| Dosya | Aciklama |
+|---|---|
+| `ml/feature_engineering.py` | 52 ozellik: RSI/MACD/BB/ATR/ADX + hacim + momentum + lag + rolling + mum sekli |
+| `ml/xgboost_model.py` | XGBoost siniflandirici: AL/SAT/BEKLE, TimeSeriesSplit CV, SHAP destekli, save/load |
+| `ml/predictor.py` | Canli tahmin arayuzu: predict() -> Signal, ATR tabanli SL/TP, from_file() |
+| `tests/test_phase5.py` | 35 test: FeatureEngineer (12) + XGBoostModel (13) + MLPredictor (10) |
+
+**Test Sonuclari:**
+- Phase 5: 35/35 PASSED
+- Toplam: 128/128 PASSED
+
+**Onemli Kararlar:**
+- Lookahead bias: TimeSeriesSplit ile gelecek veri sizintisi yok
+- Label: forward_return > threshold -> AL, < -threshold -> SAT, arada BEKLE
+- Guvenilirlik esigi: confidence < 0.40 ise BEKLE donuluyor
+- Stop-loss / take-profit: ATR tabanli (2x ATR SL, 3x ATR TP)
+
+---
+
 ## OTURUM 2 — (henüz başlamadı)
