@@ -41,16 +41,15 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
 
-## PHASE 3 — Strateji ve Sinyal Motoru (3–4 Hafta)
+## PHASE 3 — Strateji ve Sinyal Motoru ✅
 
-- [ ] `strategies/indicators.py` → pandas-ta ile tüm indikatörler (RSI, MACD, BB, ATR, ADX)
-- [ ] `strategies/regime_detector.py` → MarketRegimeDetector (ADX ile Trend/Range/Geçiş)
-- [ ] `strategies/pa_range_strategy.py` → PA Range Stratejisi (destek/direnç + RSI filtre)
-- [ ] `strategies/rsi_strategy.py` → RSI Mean Reversion (aşırı alım/satım sinyalleri)
-- [ ] Sinyal kombinasyonu → birden fazla strateji + filtre mantığı
-- [ ] Sinyal log sistemi → her sinyal timestamp + güven skoru ile kaydedilir
-- [ ] `config/settings.yaml` → strateji parametreleri YAML tabanlı
-- [ ] `tests/test_strategies.py` → her strateji sınıfı için unit test
+- [x] `strategies/indicators.py` → RSI, MACD, BB, ATR, ADX merkezi hesaplama
+- [x] `strategies/regime_detector.py` → ADX tabanlı RANGE/TREND/TRANSITION tespiti
+- [x] `strategies/pa_range_strategy.py` → Destek/direnç + RSI + rejim filtresi
+- [x] `strategies/rsi_strategy.py` → RSI Mean Reversion
+- [x] Sinyal kombinasyonu → main.py'de iki strateji kombine ediliyor
+- [x] `config/settings.yaml` + `config/loader.py` → PA Range parametreleri eklendi
+- [x] `tests/test_phase3.py` → 26/26 PASSED (toplam 71/71)
 
 ---
 
