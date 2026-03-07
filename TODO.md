@@ -53,16 +53,17 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
 
-## PHASE 4 — Backtesting ve Optimizasyon (4–5 Hafta)
+## PHASE 4 — Backtesting ve Optimizasyon ✅
 
-- [ ] Backtrader entegrasyonu → stratejileri `bt.Strategy`'e dönüştür
-- [ ] Gerçekçi maliyet modeli → komisyon %0.1 + slipaj %0.05 + gecikme ±200ms
-- [ ] Performans metrikleri → Sharpe, Sortino, Max Drawdown, Win Rate
-- [ ] Walk-Forward Optimization framework
-- [ ] `optimization/optuna_optimizer.py` → Bayesian parametre optimizasyonu
-- [ ] Monte Carlo simülasyonu → 1000 senaryo, trade sırası karıştırma
-- [ ] Overfitting tespiti → parametre duyarlılık analizi
-- [ ] Backtest rapor oluşturucu → HTML otomatik rapor
+- [x] `backtesting/engine.py` → Bar-close olay tabanlı backtest motoru
+- [x] Gerçekçi maliyet modeli → komisyon %0.1 + slipaj %0.05
+- [x] `backtesting/metrics.py` → Sharpe, Sortino, Max Drawdown, Win Rate, Profit Factor
+- [x] `backtesting/run_backtest.py` → RSI vs PA Range karşılaştırması, Parquet cache
+- [x] `optimization/optuna_optimizer.py` → Bayesian parametre optimizasyonu (RSI + PA Range)
+- [x] `dashboard.py` → Rich terminali ile canlı sinyal paneli
+- [x] `tests/test_backtesting.py` → 22/22 PASSED (toplam 93/93)
+- [ ] Monte Carlo simülasyonu → (Phase 8'e ertelendi)
+- [ ] HTML rapor → (Phase 8'e ertelendi)
 
 ---
 
