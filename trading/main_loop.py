@@ -41,6 +41,7 @@ from strategies.pa_range_strategy import PARangeStrategy
 from strategies.regime_detector import MarketRegimeDetector, Regime
 from trading.order_manager import OrderManager
 from trading.position_tracker import PositionTracker
+from risk.risk_manager import RiskManager
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -180,6 +181,15 @@ class TradingBot:
             max_positions   = 1,   # Bir seferde maks 1 BTC/USDT pozisyonu
             commission      = 0.001,
         )
+        # RiskManager: pozisyon boyutu + kill switch + min guven esigi
+        self.risk_manager = RiskManager(
+            initial_capital    = capital,
+            max_risk_pct       = 0.02,     # Tek islemde maks %2 risk
+            max_open_positions = 1,
+            min_confidence     = 0.55,
+            sl_atr_mult        = 2.0,
+            tp_atr_mult        = 3.0,
+        )
 
         self._running   = False
         self._iteration = 0
@@ -202,9 +212,11 @@ class TradingBot:
         while self._running:
             try:
                 await self._tick()
-                self._errors = 0  # Basarili tick'de hata sayacini sifirla
+                self._errors = 0
+                self.risk_manager.clear_errors()   # Basarili tick: hata sayacini sifirla
             except Exception as e:
                 self._errors += 1
+                self.risk_manager.record_error()   # Kill switch hata sayacini artir
                 logger.error(f"Tick hatasi #{self._errors}: {e}")
                 if self._errors >= 5:
                     logger.critical("Ust uste 5 hata! Bot durduruluyor.")
@@ -249,8 +261,15 @@ class TradingBot:
             f"Veri: {len(df)} bar"
         )
 
-        # 2. Acik pozisyonlarda SL/TP kontrol
-        exits = self.position_tracker.check_exit_conditions(current_price)
+        # 2. Acik pozisyonlarda SL/TP + kill switch kontrol
+        capital  = self.position_tracker.capital
+        open_pnl = self.position_tracker.update(current_price)["total_unrealized"]
+        exits = self.risk_manager.check_exit_conditions(
+            position_tracker = self.position_tracker,
+            current_price    = current_price,
+            current_capital  = capital,
+            open_pnl         = open_pnl,
+        )
         for position_id, reason in exits:
             self._close_position(position_id, current_price, reason)
 
@@ -265,71 +284,53 @@ class TradingBot:
             f"PA: {pa_sig.action} ({pa_sig.confidence:.2f})"
         )
 
-        # 4. Pozisyon ac (yoksa)
-        min_confidence = 0.55   # Acmak icin minimum guven
-        has_position   = self.position_tracker.has_open_position()
+        # ATR hesapla (pozisyon boyutu + SL/TP icin)
+        try:
+            import pandas_ta as ta
+            atr_series = ta.atr(df["high"], df["low"], df["close"], length=14)
+            atr_val = float(atr_series.iloc[-1]) if atr_series is not None else None
+        except Exception:
+            atr_val = None
 
-        if action in ("AL", "SAT") and confidence >= min_confidence and not has_position:
+        # 4. RiskManager ile sinyal degerlendir
+        open_positions_count = len(self.position_tracker.open_positions())
+        decision = self.risk_manager.evaluate_signal(
+            action               = action,
+            confidence           = confidence,
+            current_capital      = capital,
+            open_pnl             = open_pnl,
+            price                = current_price,
+            atr                  = atr_val,
+            open_positions_count = open_positions_count,
+        )
+
+        logger.info(f"Risk karari: {decision}")
+
+        if decision.approved:
             direction = "LONG" if action == "AL" else "SHORT"
 
-            # ATR hesapla (pozisyon boyutu icin)
-            try:
-                import pandas_ta as ta
-                atr_series = ta.atr(df["high"], df["low"], df["close"], length=14)
-                atr_val = float(atr_series.iloc[-1]) if atr_series is not None else None
-            except Exception:
-                atr_val = None
-
-            # Pozisyon boyutu
-            capital = self.position_tracker.capital
-            qty     = calc_position_size(
-                capital    = capital,
-                price      = current_price,
-                atr        = atr_val,
-                risk_pct   = 0.02,
-            )
-
-            if qty <= 0:
-                logger.warning("Hesaplanan miktar sifir veya negatif, pozisyon acilmiyor.")
-                return
-
-            # Stop-loss / take-profit
-            stop_loss   = rsi_sig.stop_loss   or pa_sig.stop_loss
-            take_profit = rsi_sig.take_profit or pa_sig.take_profit
-
-            # ATR tabanli fallback
-            if stop_loss is None and atr_val:
-                if direction == "LONG":
-                    stop_loss   = current_price - 2.0 * atr_val
-                    take_profit = current_price + 3.0 * atr_val
-                else:
-                    stop_loss   = current_price + 2.0 * atr_val
-                    take_profit = current_price - 3.0 * atr_val
-
-            # Emir gonder
+            # Emir gonder (RiskManager'dan gelen miktar)
             order = self.order_manager.place_market_order(
                 side          = "buy" if direction == "LONG" else "sell",
-                quantity      = qty,
+                quantity      = decision.quantity,
                 current_price = current_price,
             )
 
-            # Pozisyon ac
+            # Pozisyon ac (RiskManager'dan gelen SL/TP)
             self.position_tracker.open_position(
                 symbol      = self.cfg.general.symbol,
                 direction   = direction,
                 entry_price = order.filled_price or current_price,
-                quantity    = qty,
-                stop_loss   = stop_loss,
-                take_profit = take_profit,
+                quantity    = decision.quantity,
+                stop_loss   = decision.stop_loss,
+                take_profit = decision.take_profit,
                 strategy    = f"RSI+PA ({action})",
                 order_id    = order.order_id,
                 entry_fee   = order.fee,
             )
 
-        elif has_position and action == "BEKLE" and confidence > 0.65:
-            # Guclu BEKLE sinyali — ters isaret olabilir, cikis dusun
-            # (Bu basit bir kural — ileride gelistirilecek)
-            pass
+            # Kill switch'e islem kaydet
+            self.risk_manager.record_trade_executed()
 
         # Guncel durumu logla
         summary = self.position_tracker.update(current_price)
@@ -381,13 +382,17 @@ class TradingBot:
 
     def get_status(self) -> dict:
         """Bot durumunu dict olarak dondurur."""
+        risk = self.risk_manager.status()
         return {
-            "running"     : self._running,
-            "iteration"   : self._iteration,
-            "errors"      : self._errors,
-            "paper"       : self.paper,
-            "open_positions": len(self.position_tracker.open_positions()),
-            "capital"     : round(self.position_tracker.capital, 2),
+            "running"          : self._running,
+            "iteration"        : self._iteration,
+            "errors"           : self._errors,
+            "paper"            : self.paper,
+            "open_positions"   : len(self.position_tracker.open_positions()),
+            "capital"          : round(self.position_tracker.capital, 2),
+            "kill_switch_level": risk["kill_switch_level"],
+            "kill_switch_active": risk["kill_switch_active"],
+            "day_trades"       : risk["day_trades"],
         }
 
 

@@ -454,6 +454,9 @@ class PositionTracker:
                 "total_pnl"     : 0.0,
                 "max_drawdown_pct": round(self._max_drawdown, 3),
                 "capital"       : round(self.capital, 2),
+                "return_pct"    : round(
+                    (self.capital - self.initial_capital) / self.initial_capital * 100, 3
+                ),
             }
 
         winners = [t for t in trades if t.is_winner]
