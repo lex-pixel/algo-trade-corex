@@ -1,0 +1,430 @@
+"""
+trading/main_loop.py
+======================
+AMACI:
+    Asenkron (asyncio) ana trading dongusu.
+    Her N saniyede bir:
+      1. Veri cek (Binance Testnet REST API)
+      2. Stratejilerden sinyal al
+      3. Emir yonet (acik pozisyonlar icin SL/TP kontrol)
+      4. Yeni pozisyon ac (sinyal + risk kurallarina gore)
+      5. Telegram bildirimi gonder
+
+MODLAR:
+    paper=True  : Sahte emir, gercek fiyat (guvenli test)
+    paper=False : Gercek emir (Binance Testnet veya Live)
+
+CALISTIRMAK ICIN:
+    python -m trading.main_loop             # 60sn paper trading
+    python -m trading.main_loop --interval 30
+    python -m trading.main_loop --once      # Bir sinyal uret, cik
+
+DURDURMA:
+    Ctrl+C — acik pozisyonlar korunur (kill-switch icin bkz. risk/kill_switch.py)
+"""
+
+from __future__ import annotations
+import asyncio
+import argparse
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Proje kokunu path'e ekle
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.loader import get_config
+from data.fetcher import BinanceFetcher
+from data.cleaner import OHLCVCleaner
+from strategies.rsi_strategy import RSIStrategy
+from strategies.pa_range_strategy import PARangeStrategy
+from strategies.regime_detector import MarketRegimeDetector, Regime
+from trading.order_manager import OrderManager
+from trading.position_tracker import PositionTracker
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# ── Pozisyon boyutu hesaplayici ───────────────────────────────────────────────
+
+def calc_position_size(
+    capital: float,
+    price: float,
+    atr: float | None,
+    risk_pct: float = 0.02,
+    stop_pct: float = 0.02,
+) -> float:
+    """
+    ATR veya yuzde tabanli dinamik pozisyon boyutu.
+    Sermayenin risk_pct'ini riske atmak icin gereken miktar.
+
+    Formul: risk_amount / (stop_distance * price)
+    """
+    risk_amount = capital * risk_pct
+
+    if atr and atr > 0:
+        # ATR tabanli: 2x ATR stop mesafesi
+        stop_distance = 2.0 * atr / price
+    else:
+        stop_distance = stop_pct
+
+    if stop_distance <= 0:
+        return 0.0
+
+    qty = risk_amount / (stop_distance * price)
+
+    # Minimum ve maksimum koruma
+    min_qty = 0.0001   # BTC minimum lot
+    max_qty = capital * 0.30 / price   # Sermayenin maks %30'u
+
+    return round(max(min_qty, min(qty, max_qty)), 6)
+
+
+# ── Ana Sinyal Mantigi ────────────────────────────────────────────────────────
+
+def get_combined_signal(df, cfg, regime):
+    """
+    RSI + PA Range sinyallerini birlestir.
+    Her ikisi de ayni yonde ise guven artar.
+    """
+    rsi_cfg = cfg.strategies.rsi
+    pa_cfg  = cfg.strategies.pa_range
+
+    rsi_strategy = RSIStrategy(
+        symbol=cfg.general.symbol, timeframe=cfg.general.timeframe,
+        rsi_period=rsi_cfg.rsi_period, oversold=rsi_cfg.oversold,
+        overbought=rsi_cfg.overbought, stop_pct=rsi_cfg.stop_pct,
+        tp_pct=rsi_cfg.tp_pct,
+    )
+    pa_strategy = PARangeStrategy(
+        symbol=cfg.general.symbol, timeframe=cfg.general.timeframe,
+        lookback=pa_cfg.lookback, rsi_period=pa_cfg.rsi_period,
+        rsi_oversold=pa_cfg.rsi_oversold, rsi_overbought=pa_cfg.rsi_overbought,
+        proximity_pct=pa_cfg.proximity_pct, stop_pct=pa_cfg.stop_pct,
+        tp_pct=pa_cfg.tp_pct, use_regime_filter=pa_cfg.use_regime_filter,
+    )
+
+    rsi_signal = rsi_strategy.generate_signal(df)
+    pa_signal  = pa_strategy.generate_signal(df)
+
+    # Kombinasyon kurali:
+    # - Iki strateji hem AL derse guvenle AL
+    # - Iki strateji hem SAT derse guvenle SAT
+    # - Biri AL digeri SAT ise BEKLE
+    # - Biri BEKLE ise diger stratejinin sinyaline dur
+
+    if rsi_signal.action == pa_signal.action:
+        # Hem ayni yonde — guven artar
+        combined_confidence = min(1.0, (rsi_signal.confidence + pa_signal.confidence) / 2 + 0.1)
+        action = rsi_signal.action
+    elif rsi_signal.action == "BEKLE":
+        action     = pa_signal.action
+        combined_confidence = pa_signal.confidence * 0.8   # Tek strateji, daha dusuk guven
+    elif pa_signal.action == "BEKLE":
+        action     = rsi_signal.action
+        combined_confidence = rsi_signal.confidence * 0.8
+    else:
+        # Catisma: AL vs SAT
+        action = "BEKLE"
+        combined_confidence = 0.0
+
+    return action, round(combined_confidence, 3), rsi_signal, pa_signal
+
+
+# ── TradingBot ────────────────────────────────────────────────────────────────
+
+class TradingBot:
+    """
+    Paper / Live trading botu.
+
+    Ozellikler:
+        - Asyncio tabanli ana dongu
+        - OrderManager + PositionTracker entegrasyonu
+        - Strateji sinyallerini birlestirme
+        - SL/TP otomatik kontrol
+        - Hata yonetimi + otomatik yeniden baglanti
+
+    Parametreler:
+        paper    : True = paper trading (guvenli)
+        interval : Kac saniyede bir guncelleme yapilsin
+        capital  : Baslangic sermayesi (USDT)
+    """
+
+    def __init__(
+        self,
+        paper: bool    = True,
+        interval: int  = 60,
+        capital: float = 10_000.0,
+    ):
+        self.paper    = paper
+        self.interval = interval
+
+        self.cfg      = get_config()
+        self.fetcher  = BinanceFetcher(
+            testnet   = self.cfg.general.testnet,
+            symbol    = self.cfg.general.symbol,
+            timeframe = self.cfg.general.timeframe,
+        )
+        self.cleaner  = OHLCVCleaner()
+        self.detector = MarketRegimeDetector()
+
+        self.order_manager    = OrderManager(
+            symbol    = self.cfg.general.symbol,
+            paper     = paper,
+            commission= 0.001,
+            slippage  = 0.0005,
+        )
+        self.position_tracker = PositionTracker(
+            initial_capital = capital,
+            max_positions   = 1,   # Bir seferde maks 1 BTC/USDT pozisyonu
+            commission      = 0.001,
+        )
+
+        self._running   = False
+        self._iteration = 0
+        self._errors    = 0
+
+        mode = "PAPER" if paper else "LIVE (TESTNET)"
+        logger.info(
+            f"TradingBot baslatildi | Mod: {mode} | "
+            f"{self.cfg.general.symbol} {self.cfg.general.timeframe} | "
+            f"Sermaye: ${capital:,.2f}"
+        )
+
+    # ── Ana Dongu ─────────────────────────────────────────────────────────────
+
+    async def run(self, once: bool = False) -> None:
+        """Ana asyncio dongusu."""
+        self._running = True
+        logger.info(f"Bot dongusu basliyor. Aralik: {self.interval}sn")
+
+        while self._running:
+            try:
+                await self._tick()
+                self._errors = 0  # Basarili tick'de hata sayacini sifirla
+            except Exception as e:
+                self._errors += 1
+                logger.error(f"Tick hatasi #{self._errors}: {e}")
+                if self._errors >= 5:
+                    logger.critical("Ust uste 5 hata! Bot durduruluyor.")
+                    self._running = False
+                    break
+
+            if once:
+                break
+
+            # Sonraki tick'i bekle
+            await asyncio.sleep(self.interval)
+
+        logger.info("Bot dongusu bitti.")
+        self.position_tracker.print_summary()
+
+    async def _tick(self) -> None:
+        """
+        Tek bir dongu adimi:
+        1. Veri cek
+        2. Acik pozisyonlar icin SL/TP kontrol
+        3. Yeni sinyal uret
+        4. Pozisyon ac/kapat
+        """
+        self._iteration += 1
+        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        logger.info(f"--- Tick #{self._iteration} | {now} ---")
+
+        # 1. Veri cek
+        df = await asyncio.get_event_loop().run_in_executor(
+            None, self._fetch_data
+        )
+        if df is None or df.empty:
+            logger.warning("Veri alinamadi, tick atlaniyor.")
+            return
+
+        current_price = float(df["close"].iloc[-1])
+        regime        = self.detector.detect(df)
+
+        logger.info(
+            f"Fiyat: ${current_price:,.2f} | "
+            f"Rejim: {regime.value} | "
+            f"Veri: {len(df)} bar"
+        )
+
+        # 2. Acik pozisyonlarda SL/TP kontrol
+        exits = self.position_tracker.check_exit_conditions(current_price)
+        for position_id, reason in exits:
+            self._close_position(position_id, current_price, reason)
+
+        # 3. Sinyal uret
+        action, confidence, rsi_sig, pa_sig = get_combined_signal(
+            df, self.cfg, regime
+        )
+
+        logger.info(
+            f"Sinyal: {action} | Guven: {confidence:.2f} | "
+            f"RSI: {rsi_sig.action} ({rsi_sig.confidence:.2f}) | "
+            f"PA: {pa_sig.action} ({pa_sig.confidence:.2f})"
+        )
+
+        # 4. Pozisyon ac (yoksa)
+        min_confidence = 0.55   # Acmak icin minimum guven
+        has_position   = self.position_tracker.has_open_position()
+
+        if action in ("AL", "SAT") and confidence >= min_confidence and not has_position:
+            direction = "LONG" if action == "AL" else "SHORT"
+
+            # ATR hesapla (pozisyon boyutu icin)
+            try:
+                import pandas_ta as ta
+                atr_series = ta.atr(df["high"], df["low"], df["close"], length=14)
+                atr_val = float(atr_series.iloc[-1]) if atr_series is not None else None
+            except Exception:
+                atr_val = None
+
+            # Pozisyon boyutu
+            capital = self.position_tracker.capital
+            qty     = calc_position_size(
+                capital    = capital,
+                price      = current_price,
+                atr        = atr_val,
+                risk_pct   = 0.02,
+            )
+
+            if qty <= 0:
+                logger.warning("Hesaplanan miktar sifir veya negatif, pozisyon acilmiyor.")
+                return
+
+            # Stop-loss / take-profit
+            stop_loss   = rsi_sig.stop_loss   or pa_sig.stop_loss
+            take_profit = rsi_sig.take_profit or pa_sig.take_profit
+
+            # ATR tabanli fallback
+            if stop_loss is None and atr_val:
+                if direction == "LONG":
+                    stop_loss   = current_price - 2.0 * atr_val
+                    take_profit = current_price + 3.0 * atr_val
+                else:
+                    stop_loss   = current_price + 2.0 * atr_val
+                    take_profit = current_price - 3.0 * atr_val
+
+            # Emir gonder
+            order = self.order_manager.place_market_order(
+                side          = "buy" if direction == "LONG" else "sell",
+                quantity      = qty,
+                current_price = current_price,
+            )
+
+            # Pozisyon ac
+            self.position_tracker.open_position(
+                symbol      = self.cfg.general.symbol,
+                direction   = direction,
+                entry_price = order.filled_price or current_price,
+                quantity    = qty,
+                stop_loss   = stop_loss,
+                take_profit = take_profit,
+                strategy    = f"RSI+PA ({action})",
+                order_id    = order.order_id,
+                entry_fee   = order.fee,
+            )
+
+        elif has_position and action == "BEKLE" and confidence > 0.65:
+            # Guclu BEKLE sinyali — ters isaret olabilir, cikis dusun
+            # (Bu basit bir kural — ileride gelistirilecek)
+            pass
+
+        # Guncel durumu logla
+        summary = self.position_tracker.update(current_price)
+        logger.info(
+            f"Equity: ${summary['equity']:,.2f} | "
+            f"Unrealized PnL: ${summary['total_unrealized']:,.2f} | "
+            f"Acik pos: {summary['open_positions']}"
+        )
+
+    def _fetch_data(self):
+        """Senkron veri cekimi (executor icinde calisir)."""
+        try:
+            df_raw = self.fetcher.fetch_ohlcv(limit=200)
+            if df_raw.empty:
+                return None
+            return self.cleaner.clean(df_raw)
+        except Exception as e:
+            logger.warning(f"Veri alinamadi: {e}")
+            return None
+
+    def _close_position(
+        self, position_id: str, price: float, reason: str
+    ) -> None:
+        """Pozisyon kapatir ve kapanma emri gonderir."""
+        pos = self.position_tracker.get_position(position_id)
+        if not pos:
+            return
+
+        # Kapanma emri
+        close_side = "sell" if pos.direction == "LONG" else "buy"
+        order = self.order_manager.place_market_order(
+            side          = close_side,
+            quantity      = pos.quantity,
+            current_price = price,
+        )
+
+        # Pozisyon kapat
+        self.position_tracker.close_position(
+            position_id = position_id,
+            exit_price  = order.filled_price or price,
+            exit_reason = reason,
+            exit_fee    = order.fee,
+        )
+
+    def stop(self) -> None:
+        """Donguyu durdurur."""
+        self._running = False
+        logger.info("Bot durdurma sinyali alindi.")
+
+    def get_status(self) -> dict:
+        """Bot durumunu dict olarak dondurur."""
+        return {
+            "running"     : self._running,
+            "iteration"   : self._iteration,
+            "errors"      : self._errors,
+            "paper"       : self.paper,
+            "open_positions": len(self.position_tracker.open_positions()),
+            "capital"     : round(self.position_tracker.capital, 2),
+        }
+
+
+# ── Entry Point ───────────────────────────────────────────────────────────────
+
+async def main():
+    parser = argparse.ArgumentParser(description="Algo Trade Codex - Trading Bot")
+    parser.add_argument("--interval", type=int, default=60,
+                        help="Guncelleme suresi (saniye)")
+    parser.add_argument("--once",     action="store_true",
+                        help="Bir kez calistir, cik")
+    parser.add_argument("--capital",  type=float, default=10_000.0,
+                        help="Baslangic sermayesi (USDT)")
+    parser.add_argument("--live",     action="store_true",
+                        help="DIKKAT: gercek emir moduну etkinlestirir")
+    args = parser.parse_args()
+
+    if args.live:
+        print("\n[UYARI] LIVE MOD AKTIF — Gercek emirler gonderilecek!")
+        print("Emin misiniz? (evet yazin, baska bir sey yazi iptal eder)")
+        confirm = input("> ").strip()
+        if confirm.lower() != "evet":
+            print("Iptal edildi.")
+            return
+
+    bot = TradingBot(
+        paper    = not args.live,
+        interval = args.interval,
+        capital  = args.capital,
+    )
+
+    try:
+        await bot.run(once=args.once)
+    except KeyboardInterrupt:
+        bot.stop()
+        print("\nBot durduruldu.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

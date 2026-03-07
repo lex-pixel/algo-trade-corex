@@ -83,4 +83,30 @@ Cloud-Algo/
 
 ---
 
+## OTURUM 5 — 2026-03-07
+
+### Tamamlananlar
+
+**PHASE 6: Canli Islem Altyapisi**
+
+| Dosya | Aciklama |
+|---|---|
+| `trading/order_manager.py` | Market/limit emir, slipaj, komisyon, simulate_fill, paper/live mod |
+| `trading/position_tracker.py` | LONG/SHORT pozisyon, unrealized P&L, SL/TP otomatik kontrol, gecmis |
+| `trading/main_loop.py` | asyncio TradingBot: RSI+PA sinyal birlestirme, pozisyon boyutu, hata yonetimi |
+| `monitoring/telegram_notifier.py` | Telegram Bot API: AL/SAT/SL/TP/gunluk ozet/hata bildirimleri, dry-run |
+| `tests/test_phase6.py` | 54 test: OrderManager(17) + PositionTracker(24) + TelegramNotifier(13) |
+
+**Test Sonuclari:**
+- Phase 6: 54/54 PASSED
+- Toplam: 182/182 PASSED
+
+**Onemli Tasarim Kararlari:**
+- paper=True: sahte emir, gercek fiyat (Binance Testnet REST)
+- Pozisyon boyutu: ATR tabanli dinamik (sermayenin maks %2 risk)
+- Sinyal birlestirme: RSI + PA Range — ikisi ayni yonde ise guven artar
+- Telegram dry-run: token olmasa bile sistem calismeye devam eder
+
+---
+
 ## OTURUM 2 — (henüz başlamadı)

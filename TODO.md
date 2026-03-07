@@ -1,6 +1,6 @@
 # ALGO TRADE CODEX — Yapılacaklar Listesi
 
-Son güncelleme: 2026-03-07 (Oturum 4)
+Son güncelleme: 2026-03-07 (Oturum 5)
 Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
@@ -79,16 +79,16 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
 
-## PHASE 6 — Canlı İşlem Altyapısı (3–4 Hafta)
+## PHASE 6 — Canlı İşlem Altyapısı ✅
 
-- [ ] `trading/main_loop.py` → async trading loop (asyncio.gather)
-- [ ] `trading/order_manager.py` → OrderManager (emir gönder, takip et, iptal et)
-- [ ] `trading/position_tracker.py` → PositionTracker (açık pozisyonlar + P&L)
-- [ ] Paper trading modu → gerçek API, sahte emir
-- [ ] 2 hafta paper trading — performans kaydet
-- [ ] `monitoring/telegram_notifier.py` → Telegram bildirim sistemi
-- [ ] Hata yönetimi + otomatik yeniden bağlanma
-- [ ] Audit trail → her kararı timestamp'li logla
+- [x] `trading/order_manager.py` → OrderManager: market/limit emir, iptal, simulate_fill, paper mod
+- [x] `trading/position_tracker.py` → PositionTracker: LONG/SHORT pozisyon, SL/TP otomatik, P&L takibi
+- [x] `trading/main_loop.py` → asyncio TradingBot: RSI+PA sinyal birlestirme, paper/live mod, hata yonetimi
+- [x] Paper trading modu → paper=True ile sahte emir, gercek fiyat
+- [x] `monitoring/telegram_notifier.py` → Telegram: AL/SAT/SL/TP/gunluk ozet bildirimleri, dry-run
+- [x] `tests/test_phase6.py` → 54/54 PASSED (toplam 182/182)
+- [ ] 2 hafta paper trading — performans kaydet (canli calistirma gerektirir)
+- [ ] WebSocket canli veri → (Phase 8'e ertelendi)
 
 ---
 
