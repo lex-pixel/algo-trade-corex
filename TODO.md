@@ -1,6 +1,6 @@
 # ALGO TRADE CODEX — Yapılacaklar Listesi
 
-Son güncelleme: 2026-03-07 (Oturum 5)
+Son güncelleme: 2026-03-07 (Oturum 6)
 Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
@@ -92,16 +92,15 @@ Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
 
-## PHASE 7 — Risk Sistemi ve Güvenlik (2–3 Hafta)
+## PHASE 7 — Risk Sistemi ✅
 
-- [ ] `risk/risk_manager.py` → RiskManager (pozisyon boyutu + kill switch)
-- [ ] `risk/position_sizer.py` → Kelly + ATR tabanlı dinamik boyutlandırma
-- [ ] `risk/kill_switch.py` → 3 seviyeli alarm (Sarı %3 / Turuncu %5 / Kırmızı %15)
-- [ ] Portföy korelasyon monitörü
-- [ ] API arıza protokolü → bağlantı kopunca market order ile kapat
-- [ ] Güvenlik: .env API key yönetimi + IP whitelist
-- [ ] Sunucu güvenliği: UFW, SSH key, fail2ban
-- [ ] Risk sistemi entegrasyon testleri
+- [x] `risk/position_sizer.py` → FixedFraction + ATR + Kelly (Yari Kelly) + Conservative
+- [x] `risk/kill_switch.py` → 3 seviyeli alarm: Sari %3 / Turuncu %5 / Kirmizi %15, drawdown, hata sayaci
+- [x] `risk/risk_manager.py` → Merkezi risk: sinyal degerlendirme, SL/TP, audit log, KillSwitch entegre
+- [x] `tests/test_phase7.py` → 52/52 PASSED (toplam 234/234)
+- [ ] Portfolio korelasyon monitoru → (Phase 8'e ertelendi)
+- [ ] API arizasi protokolu → (Phase 8'e ertelendi)
+- [ ] Sunucu guvenligi (UFW, SSH) → (Deployment asamasinda)
 
 ---
 

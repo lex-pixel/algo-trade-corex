@@ -109,4 +109,28 @@ Cloud-Algo/
 
 ---
 
+## OTURUM 6 — 2026-03-07
+
+### Tamamlananlar
+
+**PHASE 7: Risk Sistemi**
+
+| Dosya | Aciklama |
+|---|---|
+| `risk/position_sizer.py` | FixedFraction + ATR-tabanli + Kelly (Yari) + Conservative |
+| `risk/kill_switch.py` | 3 seviye: Sari/Turuncu/Kirmizi, drawdown, hata sayaci, manuel reset |
+| `risk/risk_manager.py` | Merkezi: sinyal onayi, SL/TP, KillSwitch + PositionSizer entegre, audit log |
+| `tests/test_phase7.py` | 52 test: PositionSizer + KillSwitch + RiskManager |
+
+**Test Sonuclari:**
+- Phase 7: 52/52 PASSED
+- Toplam: 234/234 PASSED
+
+**Onemli Tasarim Kararlari:**
+- Kelly Yari Kelly (fraction=0.5) — tam Kelly cok agresif
+- Kirmizi alarm manuel reset zorunlu (insan kontrolu sart)
+- RiskManager her karari audit log'a yazar
+
+---
+
 ## OTURUM 2 — (henüz başlamadı)
