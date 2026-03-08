@@ -41,6 +41,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import ccxt
 from data.fetcher import BinanceFetcher
 from data.cleaner import OHLCVCleaner
 from ml.predictor import MLPredictor
@@ -61,6 +62,28 @@ MODEL_FILE = MODEL_DIR / "xgb_btc_1h.json"
 
 CACHE_DIR  = PROJECT_ROOT / "data" / "raw"
 CACHE_FILE = CACHE_DIR / "train_btc_usdt_1h.parquet"
+
+
+# ── Public Fetcher (API key olmadan) ─────────────────────────────────────────
+
+def _make_public_fetcher() -> BinanceFetcher:
+    """
+    Gercek Binance'e API key olmadan baglanir.
+    OHLCV verisi public endpoint — login gerektirmez.
+    """
+    fetcher = BinanceFetcher.__new__(BinanceFetcher)
+    fetcher.symbol    = DEFAULT_SYMBOL
+    fetcher.timeframe = DEFAULT_TIMEFRAME
+    fetcher.testnet   = False
+
+    exchange = ccxt.binance({
+        "apiKey": "",
+        "secret": "",
+        "options": {"defaultType": "spot"},
+        "enableRateLimit": True,
+    })
+    fetcher.exchange = exchange
+    return fetcher
 
 
 # ── Veri Yukleme ──────────────────────────────────────────────────────────────
@@ -85,14 +108,20 @@ def _load_or_fetch(days: int, refresh: bool) -> pd.DataFrame:
         else:
             logger.info(f"Cache kisa ({len(df)} < {min_rows}), yeniden cekiliyor...")
 
-    # Binance'ten cek
-    logger.info(f"Binance Testnet'ten {days} gunluk veri cekiliyor...")
-    fetcher = BinanceFetcher(testnet=True, symbol=DEFAULT_SYMBOL, timeframe=DEFAULT_TIMEFRAME)
+    # Gercek Binance'ten cek (API key gerekmez — public OHLCV endpoint)
+    # Testnet sadece ~30 gunluk gecmis veriyor; egitim icin gercek borsa daha iyi
+    logger.info(f"Binance public API'den {days} gunluk veri cekiliyor (API key gerekmez)...")
+    fetcher = _make_public_fetcher()
 
     try:
         df = fetcher.fetch_since(since_days=days, batch_size=500)
     except Exception as e:
-        logger.error(f"Veri cekme hatasi: {e}")
+        logger.warning(f"Gercek Binance hatasi ({e}), testnet deneniyor...")
+        try:
+            fetcher2 = BinanceFetcher(testnet=True, symbol=DEFAULT_SYMBOL, timeframe=DEFAULT_TIMEFRAME)
+            df = fetcher2.fetch_since(since_days=days, batch_size=500)
+        except Exception as e2:
+            logger.error(f"Her iki kaynak da basarisiz: {e2}")
 
         # Hata durumunda mevcut cache'i kullan (eski de olsa)
         if CACHE_FILE.exists():

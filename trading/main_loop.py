@@ -42,6 +42,7 @@ from strategies.regime_detector import MarketRegimeDetector, Regime
 from trading.order_manager import OrderManager
 from trading.position_tracker import PositionTracker
 from risk.risk_manager import RiskManager
+from ml.predictor import MLPredictor
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -82,12 +83,17 @@ def calc_position_size(
     return round(max(min_qty, min(qty, max_qty)), 6)
 
 
-# ── Ana Sinyal Mantigi ────────────────────────────────────────────────────────
+# ── Sinyal Birlestirme ────────────────────────────────────────────────────────
 
-def get_combined_signal(df, cfg, regime):
+def get_combined_signal(df, cfg, regime, ml_predictor=None):
     """
-    RSI + PA Range sinyallerini birlestir.
-    Her ikisi de ayni yonde ise guven artar.
+    RSI + PA Range + XGBoost sinyallerini cogunluk oyuyla birlestir.
+
+    Kural:
+        - 3 sinyal: RSI, PA, ML (ML yoksa 2 sinyal)
+        - Cogunluk: en az 2 sinyal ayni yonde ise o yon secilir
+        - Guven: oy verenlerin ortalama guveni + her ek oy icin +0.05 bonus
+        - Catisma (hepsi farkli): BEKLE
     """
     rsi_cfg = cfg.strategies.rsi
     pa_cfg  = cfg.strategies.pa_range
@@ -109,28 +115,51 @@ def get_combined_signal(df, cfg, regime):
     rsi_signal = rsi_strategy.generate_signal(df)
     pa_signal  = pa_strategy.generate_signal(df)
 
-    # Kombinasyon kurali:
-    # - Iki strateji hem AL derse guvenle AL
-    # - Iki strateji hem SAT derse guvenle SAT
-    # - Biri AL digeri SAT ise BEKLE
-    # - Biri BEKLE ise diger stratejinin sinyaline dur
+    # ML sinyal — model yuklu degilse None
+    ml_signal = None
+    if ml_predictor is not None:
+        try:
+            ml_signal = ml_predictor.predict(df)
+        except Exception as e:
+            logger.warning(f"ML tahmin hatasi: {e}")
 
-    if rsi_signal.action == pa_signal.action:
-        # Hem ayni yonde — guven artar
-        combined_confidence = min(1.0, (rsi_signal.confidence + pa_signal.confidence) / 2 + 0.1)
-        action = rsi_signal.action
-    elif rsi_signal.action == "BEKLE":
-        action     = pa_signal.action
-        combined_confidence = pa_signal.confidence * 0.8   # Tek strateji, daha dusuk guven
-    elif pa_signal.action == "BEKLE":
-        action     = rsi_signal.action
-        combined_confidence = rsi_signal.confidence * 0.8
+    # Tum sinyalleri topla
+    signals = [rsi_signal, pa_signal]
+    if ml_signal is not None:
+        signals.append(ml_signal)
+
+    # Her yone verilen oy sayisi ve toplam guven
+    vote_counts = {"AL": 0, "SAT": 0, "BEKLE": 0}
+    vote_conf   = {"AL": 0.0, "SAT": 0.0, "BEKLE": 0.0}
+    for sig in signals:
+        vote_counts[sig.action] += 1
+        vote_conf[sig.action]   += sig.confidence
+
+    # Cogunluk bul (en fazla oy alan)
+    best_action = max(vote_counts, key=vote_counts.get)
+    best_count  = vote_counts[best_action]
+    total_sigs  = len(signals)
+
+    if best_count >= 2:
+        # En az 2 taraf ayni yonde
+        avg_conf   = vote_conf[best_action] / best_count
+        # Ek oy bonusu: 2/2 = 0, 3/3 veya 2/3 → +0.05 per extra voter over threshold
+        bonus      = 0.05 * (best_count - 1)
+        confidence = min(1.0, avg_conf + bonus)
+        action     = best_action
     else:
-        # Catisma: AL vs SAT
-        action = "BEKLE"
-        combined_confidence = 0.0
+        # Hepsi farkli (orn. AL, SAT, BEKLE) — guvensiz, BEKLE
+        action     = "BEKLE"
+        confidence = 0.0
 
-    return action, round(combined_confidence, 3), rsi_signal, pa_signal
+    ml_info = f"ML:{ml_signal.action}({ml_signal.confidence:.2f})" if ml_signal else "ML:yok"
+    logger.debug(
+        f"Sinyal oylari | RSI:{rsi_signal.action}({rsi_signal.confidence:.2f}) "
+        f"PA:{pa_signal.action}({pa_signal.confidence:.2f}) {ml_info} "
+        f"-> {action}({confidence:.2f})"
+    )
+
+    return action, round(confidence, 3), rsi_signal, pa_signal, ml_signal
 
 
 # ── TradingBot ────────────────────────────────────────────────────────────────
@@ -190,6 +219,23 @@ class TradingBot:
             sl_atr_mult        = 2.0,
             tp_atr_mult        = 3.0,
         )
+
+        # ML model — dosya varsa yukle, yoksa ML olmadan calis
+        _model_path = Path(__file__).parent.parent / "ml" / "models" / "xgb_btc_1h.json"
+        if _model_path.exists():
+            try:
+                self.ml_predictor = MLPredictor.from_file(
+                    _model_path,
+                    symbol    = self.cfg.general.symbol,
+                    timeframe = self.cfg.general.timeframe,
+                )
+                logger.info(f"ML model yuklendi: {_model_path.name}")
+            except Exception as e:
+                logger.warning(f"ML model yuklenemedi ({e}), ML olmadan devam ediliyor.")
+                self.ml_predictor = None
+        else:
+            logger.info("ML model dosyasi bulunamadi, ML olmadan calisiliyor.")
+            self.ml_predictor = None
 
         self._running   = False
         self._iteration = 0
@@ -273,15 +319,20 @@ class TradingBot:
         for position_id, reason in exits:
             self._close_position(position_id, current_price, reason)
 
-        # 3. Sinyal uret
-        action, confidence, rsi_sig, pa_sig = get_combined_signal(
-            df, self.cfg, regime
+        # 3. Sinyal uret (RSI + PA + ML)
+        action, confidence, rsi_sig, pa_sig, ml_sig = get_combined_signal(
+            df, self.cfg, regime, self.ml_predictor
         )
 
+        ml_part = (
+            f"ML: {ml_sig.action} ({ml_sig.confidence:.2f})"
+            if ml_sig else "ML: yok"
+        )
         logger.info(
             f"Sinyal: {action} | Guven: {confidence:.2f} | "
             f"RSI: {rsi_sig.action} ({rsi_sig.confidence:.2f}) | "
-            f"PA: {pa_sig.action} ({pa_sig.confidence:.2f})"
+            f"PA: {pa_sig.action} ({pa_sig.confidence:.2f}) | "
+            f"{ml_part}"
         )
 
         # ATR hesapla (pozisyon boyutu + SL/TP icin)
@@ -324,7 +375,7 @@ class TradingBot:
                 quantity    = decision.quantity,
                 stop_loss   = decision.stop_loss,
                 take_profit = decision.take_profit,
-                strategy    = f"RSI+PA ({action})",
+                strategy    = f"RSI+PA+ML ({action})" if self.ml_predictor else f"RSI+PA ({action})",
                 order_id    = order.order_id,
                 entry_fee   = order.fee,
             )
