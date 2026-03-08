@@ -26,6 +26,7 @@ DURDURMA:
 from __future__ import annotations
 import asyncio
 import argparse
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -241,6 +242,9 @@ class TradingBot:
         self._iteration = 0
         self._errors    = 0
 
+        # Onceki oturum varsa yukle
+        self.load_state()
+
         mode = "PAPER" if paper else "LIVE (TESTNET)"
         logger.info(
             f"TradingBot baslatildi | Mod: {mode} | "
@@ -391,6 +395,9 @@ class TradingBot:
             f"Acik pos: {summary['open_positions']}"
         )
 
+        # State'i diske kaydet (PC kapansa bile devam eder)
+        self.save_state()
+
     def _fetch_data(self):
         """Senkron veri cekimi (executor icinde calisir)."""
         try:
@@ -425,6 +432,131 @@ class TradingBot:
             exit_reason = reason,
             exit_fee    = order.fee,
         )
+
+    # ── State Kayit / Yukle ───────────────────────────────────────────────────
+
+    _STATE_FILE = Path(__file__).parent.parent / "data" / "bot_state.json"
+
+    def save_state(self) -> None:
+        """
+        Bot durumunu JSON dosyasina kaydeder.
+        Her tick sonunda otomatik cagrilir — PC kapansa bile devam eder.
+
+        Kaydedilenler:
+            - Guncel sermaye
+            - Tum kapanmis islemler (P&L gecmisi)
+            - Equity peak / max drawdown
+            - Toplam tick sayisi
+        """
+        pt = self.position_tracker
+
+        # Kapanmis islemleri serialize et
+        trades = []
+        for t in pt._history:
+            trades.append({
+                "position_id" : t.position_id,
+                "symbol"      : t.symbol,
+                "direction"   : t.direction,
+                "entry_price" : t.entry_price,
+                "exit_price"  : t.exit_price,
+                "quantity"    : t.quantity,
+                "realized_pnl": t.realized_pnl,
+                "realized_pct": t.realized_pct,
+                "exit_reason" : t.exit_reason,
+                "opened_at"   : t.opened_at.isoformat(),
+                "closed_at"   : t.closed_at.isoformat(),
+                "strategy"    : t.strategy,
+                "total_fee"   : t.total_fee,
+            })
+
+        # Acik pozisyonlari serialize et (basit bilgi)
+        open_pos = []
+        for pos in pt.open_positions():
+            open_pos.append({
+                "position_id" : pos.position_id,
+                "symbol"      : pos.symbol,
+                "direction"   : pos.direction,
+                "entry_price" : pos.entry_price,
+                "quantity"    : pos.quantity,
+                "stop_loss"   : pos.stop_loss,
+                "take_profit" : pos.take_profit,
+                "strategy"    : pos.strategy,
+                "opened_at"   : pos.opened_at.isoformat(),
+                "entry_fee"   : pos.entry_fee,
+            })
+
+        state = {
+            "saved_at"       : datetime.now(timezone.utc).isoformat(),
+            "capital"        : round(pt.capital, 4),
+            "initial_capital": round(pt.initial_capital, 4),
+            "equity_peak"    : round(pt._equity_peak, 4),
+            "max_drawdown"   : round(pt._max_drawdown, 6),
+            "iteration"      : self._iteration,
+            "paper"          : self.paper,
+            "trades"         : trades,
+            "open_positions" : open_pos,
+        }
+
+        self._STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+
+    def load_state(self) -> bool:
+        """
+        Kaydedilmis durumu yukler.
+        __init__ icinde cagrilir — eski oturum varsa kaldigi yerden devam eder.
+
+        Returns:
+            True = state yuklendi, False = ilk calistirma
+        """
+        if not self._STATE_FILE.exists():
+            return False
+
+        try:
+            with open(self._STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+
+            pt = self.position_tracker
+
+            # Sermaye geri yukle
+            pt.capital        = state["capital"]
+            pt.initial_capital= state["initial_capital"]
+            pt._equity_peak   = state.get("equity_peak", state["capital"])
+            pt._max_drawdown  = state.get("max_drawdown", 0.0)
+            self._iteration   = state.get("iteration", 0)
+
+            # Kapanmis islem gecmisini geri yukle
+            from trading.position_tracker import ClosedTrade
+            for t in state.get("trades", []):
+                pt._history.append(ClosedTrade(
+                    position_id = t["position_id"],
+                    symbol      = t["symbol"],
+                    direction   = t["direction"],
+                    entry_price = t["entry_price"],
+                    exit_price  = t["exit_price"],
+                    quantity    = t["quantity"],
+                    realized_pnl= t["realized_pnl"],
+                    realized_pct= t["realized_pct"],
+                    exit_reason = t["exit_reason"],
+                    opened_at   = datetime.fromisoformat(t["opened_at"]),
+                    closed_at   = datetime.fromisoformat(t["closed_at"]),
+                    strategy    = t.get("strategy", "unknown"),
+                    total_fee   = t.get("total_fee", 0.0),
+                ))
+
+            saved_at = state.get("saved_at", "?")
+            n_trades = len(state.get("trades", []))
+            logger.info(
+                f"Onceki oturum yuklendi | "
+                f"Kaydedilme: {saved_at[:16]} | "
+                f"Sermaye: ${pt.capital:,.2f} | "
+                f"{n_trades} kapanmis islem"
+            )
+            return True
+
+        except Exception as e:
+            logger.warning(f"State yuklenemedi ({e}), sifirdan baslanıyor.")
+            return False
 
     def stop(self) -> None:
         """Donguyu durdurur."""
