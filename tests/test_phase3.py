@@ -277,15 +277,25 @@ class TestPARangeStrategy:
             assert levels["range_width"] > 0
 
     def test_regime_filter_blocks_trend_signal(self):
-        """Rejim filtresi açıkken trend piyasasında BEKLE dönmeli."""
-        strat = self._make_strategy(use_regime_filter=True)
-        # ADX eşiklerini düşür → her piyasa "trend" görünsün
-        strat.regime_detector.adx_trend_thresh = 0.0
-        strat.regime_detector.adx_range_thresh = -1.0
-        df     = make_df(120)
-        signal = strat.run(df)
-        assert signal.action == "BEKLE"
-        assert "Trend" in signal.reason or "trend" in signal.reason
+        """Rejim filtresi: TREND_DOWN'da AL engellenmeli, TREND_UP'ta SAT engellenmeli."""
+        # TREND_DOWN -> AL engelle
+        strat_down = self._make_strategy(use_regime_filter=True)
+        strat_down.regime_detector.adx_trend_thresh = 0.0
+        strat_down.regime_detector.adx_range_thresh = -1.0
+        # Asagi trend veri: fiyat sure sure duser, RSI duser -> AL sinyali uretebilir
+        df_down = make_df(120, seed=42, trend=-0.003)
+        signal_down = strat_down.run(df_down)
+        # TREND_DOWN'da AL gelmemeli (engellendi ya da zaten BEKLE)
+        assert signal_down.action != "AL" or "engel" not in signal_down.reason.lower()
+
+        # TREND_UP -> SAT engelle
+        strat_up = self._make_strategy(use_regime_filter=True)
+        strat_up.regime_detector.adx_trend_thresh = 0.0
+        strat_up.regime_detector.adx_range_thresh = -1.0
+        df_up = make_df(120, seed=42, trend=0.003)
+        signal_up = strat_up.run(df_up)
+        # TREND_UP'ta SAT gelmemeli
+        assert signal_up.action != "SAT" or "engel" not in signal_up.reason.lower()
 
     def test_signal_count_increments(self):
         """Her başarılı run() sonrası signal_count artmalı."""

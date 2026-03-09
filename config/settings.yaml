@@ -19,8 +19,8 @@ strategies:
   rsi:
     enabled: true
     rsi_period: 14          # RSI hesaplama periyodu (standart: 14)
-    oversold: 30            # Bu değerin altı → AL sinyali bölgesi
-    overbought: 70          # Bu değerin üstü → SAT sinyali bölgesi
+    oversold: 35            # Bu değerin altı → AL sinyali bölgesi (eski: 30, daraltıldı)
+    overbought: 65          # Bu değerin üstü → SAT sinyali bölgesi (eski: 70, daraltıldı)
     stop_pct: 0.015         # Stop-loss yüzdesi: %1.5
     tp_pct: 0.030           # Take-profit yüzdesi: %3.0
     min_confidence: 0.05    # Bu güven skorunun altındaki sinyaller işleme alınmaz

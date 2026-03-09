@@ -113,13 +113,16 @@ class PARangeStrategy(BaseStrategy):
             )
 
         # ── Adım 1: Rejim Filtresi ────────────────────────────────────────
+        # TREND_DOWN: AL sinyali engellenir (trende karsi gitme)
+        # TREND_UP:   SAT sinyali engellenir (yukari trende karsi satma)
+        # Her iki durumda da trend YONUNDE islem acilabilir
+        _blocked_action: str | None = None
         if self.use_regime_filter and self.regime_detector:
             regime = self.regime_detector.detect(df)
-            if regime in (Regime.TREND_UP, Regime.TREND_DOWN):
-                return Signal(
-                    action="BEKLE", confidence=0.0,
-                    reason=f"Trend piyasasi ({regime.value}), PA Range devre disi"
-                )
+            if regime == Regime.TREND_DOWN:
+                _blocked_action = "AL"   # asagi trendde AL engelle
+            elif regime == Regime.TREND_UP:
+                _blocked_action = "SAT"  # yukari trendde SAT engelle
 
         # ── Adım 2: İndikatörleri Hesapla ────────────────────────────────
         ind = IndicatorSet(df, rsi_period=self.rsi_period)
@@ -161,6 +164,10 @@ class PARangeStrategy(BaseStrategy):
 
         # AL: Fiyat desteğe yakın VE RSI aşırı satım bölgesinde
         if near_support and rsi < self.rsi_oversold:
+            # TREND_DOWN'da AL engelle (trende karsi gitme)
+            if _blocked_action == "AL":
+                logger.debug(f"AL engellendi: TREND_DOWN rejimi | RSI: {rsi:.1f}")
+                return Signal(action="BEKLE", confidence=0.0, reason="TREND_DOWN: AL engellendi")
             confidence = self._calc_confidence_al(price, support, resistance, rsi)
             signal = Signal(
                 action="AL",
@@ -180,6 +187,10 @@ class PARangeStrategy(BaseStrategy):
 
         # SAT: Fiyat dirence yakın VE RSI aşırı alım bölgesinde
         elif near_resistance and rsi > self.rsi_overbought:
+            # TREND_UP'ta SAT engelle (yukari trende karsi satma)
+            if _blocked_action == "SAT":
+                logger.debug(f"SAT engellendi: TREND_UP rejimi | RSI: {rsi:.1f}")
+                return Signal(action="BEKLE", confidence=0.0, reason="TREND_UP: SAT engellendi")
             confidence = self._calc_confidence_sat(price, support, resistance, rsi)
             signal = Signal(
                 action="SAT",
