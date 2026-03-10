@@ -144,20 +144,28 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_
         vote_counts[sig.action] += 1
         vote_conf[sig.action]   += sig.confidence
 
-    # Cogunluk bul (en fazla oy alan)
-    best_action = max(vote_counts, key=vote_counts.get)
-    best_count  = vote_counts[best_action]
-    total_sigs  = len(signals)
+    # Oylama: BEKLE oylarini yoksay, sadece AL vs SAT karsilastir.
+    # AL kazanirsa → AL, SAT kazanirsa → SAT, esitse → BEKLE
+    # Bu sayede tek bir AL/SAT sinyali bile yeterliyse islem acar.
+    al_count  = vote_counts["AL"]
+    sat_count = vote_counts["SAT"]
 
-    if best_count >= 2:
-        # En az 2 taraf ayni yonde
-        avg_conf   = vote_conf[best_action] / best_count
-        # Ek oy bonusu: 2/2 = 0, 3/3 veya 2/3 → +0.05 per extra voter over threshold
-        bonus      = 0.05 * (best_count - 1)
+    if al_count > sat_count and al_count > 0:
+        avg_conf   = vote_conf["AL"] / al_count
+        bonus      = 0.05 * (al_count - 1)
         confidence = min(1.0, avg_conf + bonus)
-        action     = best_action
+        action     = "AL"
+    elif sat_count > al_count and sat_count > 0:
+        avg_conf   = vote_conf["SAT"] / sat_count
+        bonus      = 0.05 * (sat_count - 1)
+        confidence = min(1.0, avg_conf + bonus)
+        action     = "SAT"
+    elif al_count > 0 and sat_count > 0:
+        # AL ve SAT catisiyor — guvensiz
+        action     = "BEKLE"
+        confidence = 0.0
     else:
-        # Hepsi farkli (orn. AL, SAT, BEKLE) — guvensiz, BEKLE
+        # Hepsi BEKLE
         action     = "BEKLE"
         confidence = 0.0
 
@@ -168,23 +176,25 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_
         f"-> {action}({confidence:.2f})"
     )
 
-    # ── MTF Filtresi: 4h trend yonune karsi islem engelle ────────────────────
+    # ── MTF Filtresi: 4h kontra-trend ise guveni %30 dusur (bloke etme) ─────────
+    # Eski davranis: tamamen bloke ederdi → hic islem yok
+    # Yeni davranis: guveni azalt, RiskManager min_confidence ile filtrele
     if big_regime is not None and action != "BEKLE":
         if action == "AL" and big_regime == Regime.TREND_DOWN:
+            confidence = round(confidence * 0.70, 3)
             logger.info(
-                f"MTF filtre: 4h={big_regime.value} | AL sinyali engellendi (kontra-trend)"
+                f"MTF filtre: 4h={big_regime.value} | AL kontra-trend, "
+                f"guven -%30 → {confidence:.2f}"
             )
-            action     = "BEKLE"
-            confidence = 0.0
         elif action == "SAT" and big_regime == Regime.TREND_UP:
+            confidence = round(confidence * 0.70, 3)
             logger.info(
-                f"MTF filtre: 4h={big_regime.value} | SAT sinyali engellendi (kontra-trend)"
+                f"MTF filtre: 4h={big_regime.value} | SAT kontra-trend, "
+                f"guven -%30 → {confidence:.2f}"
             )
-            action     = "BEKLE"
-            confidence = 0.0
         else:
             logger.info(
-                f"MTF filtre: 4h={big_regime.value} | {action} trend yonunde, onaylandi"
+                f"MTF filtre: 4h={big_regime.value} | {action} trend yonunde, tam guven"
             )
 
     # ── 15m Giriş Zamanlaması: Aşırı Zonda Girme ────────────────────────────
@@ -197,17 +207,17 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_
             rsi_15m_val = float(rsi_15m.iloc[-1]) if rsi_15m is not None else None
 
             if rsi_15m_val is not None:
-                if action == "AL" and rsi_15m_val > 65:
+                if action == "AL" and rsi_15m_val > 78:
                     logger.info(
-                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} > 65 | "
-                        f"AL sinyali gec kalindi, BEKLE"
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} > 78 | "
+                        f"AL sinyali asiri alim, BEKLE"
                     )
                     action     = "BEKLE"
                     confidence = 0.0
-                elif action == "SAT" and rsi_15m_val < 35:
+                elif action == "SAT" and rsi_15m_val < 22:
                     logger.info(
-                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} < 35 | "
-                        f"SAT sinyali gec kalindi, BEKLE"
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} < 22 | "
+                        f"SAT sinyali asiri satim, BEKLE"
                     )
                     action     = "BEKLE"
                     confidence = 0.0
@@ -288,7 +298,7 @@ class TradingBot:
             initial_capital    = capital,
             max_risk_pct       = 0.02,     # Tek islemde maks %2 risk
             max_open_positions = 1,
-            min_confidence     = 0.55,
+            min_confidence     = 0.30,
             sl_atr_mult        = 2.0,
             tp_atr_mult        = 3.0,
         )
