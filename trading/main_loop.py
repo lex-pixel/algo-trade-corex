@@ -86,7 +86,7 @@ def calc_position_size(
 
 # ── Sinyal Birlestirme ────────────────────────────────────────────────────────
 
-def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None):
+def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_15m=None):
     """
     RSI + PA Range + XGBoost sinyallerini cogunluk oyuyla birlestir.
 
@@ -99,6 +99,10 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None):
     big_regime: 4h timeframe rejimi (MTF filtresi)
         - 4h TREND_DOWN iken AL sinyali gelirse -> BEKLE (kontra-trend engeli)
         - 4h TREND_UP   iken SAT sinyali gelirse -> BEKLE (kontra-trend engeli)
+
+    df_15m: 15m giriş zamanlaması (MTF entry filtresi)
+        - AL sinyali: 15m RSI > 65 ise BEKLE (15m aşırı alım, geç kalındı)
+        - SAT sinyali: 15m RSI < 35 ise BEKLE (15m aşırı satım, geç kalındı)
     """
     rsi_cfg = cfg.strategies.rsi
     pa_cfg  = cfg.strategies.pa_range
@@ -183,6 +187,38 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None):
                 f"MTF filtre: 4h={big_regime.value} | {action} trend yonunde, onaylandi"
             )
 
+    # ── 15m Giriş Zamanlaması: Aşırı Zonda Girme ────────────────────────────
+    # AL sinyali var ama 15m'de fiyat zaten cok yukseldi → girme (gec kaldin)
+    # SAT sinyali var ama 15m'de fiyat zaten cok dustu → girme (gec kaldin)
+    if df_15m is not None and action != "BEKLE" and len(df_15m) >= 15:
+        try:
+            import pandas_ta as ta
+            rsi_15m = ta.rsi(df_15m["close"], length=14)
+            rsi_15m_val = float(rsi_15m.iloc[-1]) if rsi_15m is not None else None
+
+            if rsi_15m_val is not None:
+                if action == "AL" and rsi_15m_val > 65:
+                    logger.info(
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} > 65 | "
+                        f"AL sinyali gec kalindi, BEKLE"
+                    )
+                    action     = "BEKLE"
+                    confidence = 0.0
+                elif action == "SAT" and rsi_15m_val < 35:
+                    logger.info(
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} < 35 | "
+                        f"SAT sinyali gec kalindi, BEKLE"
+                    )
+                    action     = "BEKLE"
+                    confidence = 0.0
+                else:
+                    logger.info(
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} | "
+                        f"{action} icin uygun giris zamani"
+                    )
+        except Exception as e:
+            logger.warning(f"15m RSI hesaplanamadi: {e}")
+
     return action, round(confidence, 3), rsi_signal, pa_signal, ml_signal
 
 
@@ -225,6 +261,12 @@ class TradingBot:
             testnet   = self.cfg.general.testnet,
             symbol    = self.cfg.general.symbol,
             timeframe = "4h",
+        )
+        # MTF: 15m giris zamanlama icin ayri fetcher
+        self.fetcher_15m = BinanceFetcher(
+            testnet   = self.cfg.general.testnet,
+            symbol    = self.cfg.general.symbol,
+            timeframe = "15m",
         )
         self.cleaner    = OHLCVCleaner()
         self.detector   = MarketRegimeDetector()
@@ -332,9 +374,10 @@ class TradingBot:
             logger.warning("Veri alinamadi, tick atlaniyor.")
             return
 
-        # MTF: 4h trend verisi (hata olursa None, bot yine de calisir)
-        df_4h = await asyncio.get_event_loop().run_in_executor(
-            None, self._fetch_data_4h
+        # MTF: 4h trend + 15m giris verisi (hata olursa None, bot yine de calisir)
+        df_4h, df_15m = await asyncio.gather(
+            asyncio.get_event_loop().run_in_executor(None, self._fetch_data_4h),
+            asyncio.get_event_loop().run_in_executor(None, self._fetch_data_15m),
         )
         big_regime = None
         if df_4h is not None and not df_4h.empty:
@@ -347,6 +390,7 @@ class TradingBot:
             f"Fiyat: ${current_price:,.2f} | "
             f"1h Rejim: {regime.value} | "
             f"4h Rejim: {big_regime.value if big_regime else 'N/A'} | "
+            f"15m: {'OK' if df_15m is not None else 'N/A'} | "
             f"Veri: {len(df)} bar"
         )
 
@@ -362,9 +406,10 @@ class TradingBot:
         for position_id, reason in exits:
             self._close_position(position_id, current_price, reason)
 
-        # 3. Sinyal uret (RSI + PA + ML + 4h MTF filtresi)
+        # 3. Sinyal uret (RSI + PA + ML + 4h trend filtresi + 15m giris zamanlama)
         action, confidence, rsi_sig, pa_sig, ml_sig = get_combined_signal(
-            df, self.cfg, regime, self.ml_predictor, big_regime=big_regime
+            df, self.cfg, regime, self.ml_predictor,
+            big_regime=big_regime, df_15m=df_15m
         )
 
         ml_part = (
@@ -457,6 +502,17 @@ class TradingBot:
             return self.cleaner.clean(df_raw)
         except Exception as e:
             logger.warning(f"4h MTF verisi alinamadi: {e}")
+            return None
+
+    def _fetch_data_15m(self):
+        """MTF: 15m giris zamanlama verisi cekimi. Hata olursa None doner (bot durdurmaz)."""
+        try:
+            df_raw = self.fetcher_15m.fetch_ohlcv(limit=100)
+            if df_raw.empty:
+                return None
+            return self.cleaner.clean(df_raw)
+        except Exception as e:
+            logger.warning(f"15m MTF verisi alinamadi: {e}")
             return None
 
     def _close_position(
