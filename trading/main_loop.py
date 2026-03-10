@@ -310,9 +310,11 @@ class TradingBot:
             logger.info("ML model dosyasi bulunamadi, ML olmadan calisiliyor.")
             self.ml_predictor = None
 
-        self._running   = False
-        self._iteration = 0
-        self._errors    = 0
+        self._running        = False
+        self._iteration      = 0
+        self._errors         = 0
+        self._equity_history = []   # [{ts, equity, price}] — dashboard icin
+        self._last_retrain   = 0    # Son retrain'in iteration numarasi
 
         # Onceki oturum varsa yukle
         self.load_state()
@@ -479,6 +481,18 @@ class TradingBot:
             f"Acik pos: {summary['open_positions']}"
         )
 
+        # Equity gecmisine ekle (dashboard icin — son 1000 nokta tutulur)
+        self._equity_history.append({
+            "ts"    : datetime.now(timezone.utc).isoformat(),
+            "equity": round(summary["equity"], 2),
+            "price" : round(current_price, 2),
+        })
+        if len(self._equity_history) > 1000:
+            self._equity_history = self._equity_history[-1000:]
+
+        # Auto-retrain: her 720 tick'te bir (1h bot = 30 gun) ML modeli yenile
+        self._maybe_retrain()
+
         # State'i diske kaydet (PC kapansa bile devam eder)
         self.save_state()
 
@@ -601,6 +615,7 @@ class TradingBot:
             "paper"          : self.paper,
             "trades"         : trades,
             "open_positions" : open_pos,
+            "equity_history" : self._equity_history,   # dashboard icin
         }
 
         self._STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -650,6 +665,9 @@ class TradingBot:
                     total_fee   = t.get("total_fee", 0.0),
                 ))
 
+            # Equity gecmisini geri yukle
+            self._equity_history = state.get("equity_history", [])
+
             saved_at = state.get("saved_at", "?")
             n_trades = len(state.get("trades", []))
             logger.info(
@@ -663,6 +681,48 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"State yuklenemedi ({e}), sifirdan baslanıyor.")
             return False
+
+    # ── Auto-Retrain ──────────────────────────────────────────────────────────
+
+    _RETRAIN_EVERY = 720   # 1h bot icin 720 tick = 30 gun
+
+    def _maybe_retrain(self) -> None:
+        """
+        Her 720 tick'te bir (yaklasik 30 gun) ML modelini arka planda yeniden egitir.
+        Bot calismasini engellemez — ayri thread icinde calisir.
+        """
+        ticks_since = self._iteration - self._last_retrain
+        if ticks_since < self._RETRAIN_EVERY:
+            return
+
+        self._last_retrain = self._iteration
+        logger.info(f"Auto-retrain tetiklendi (Tick #{self._iteration}, ~30 gun gecti)")
+
+        import threading
+        def _retrain_worker():
+            try:
+                from ml.auto_retrain import retrain
+                success = retrain(days=365, quiet=True)
+                if success:
+                    # Yeni modeli yukle
+                    _model_path = Path(__file__).parent.parent / "ml" / "models" / "xgb_btc_1h.json"
+                    if _model_path.exists() and self.ml_predictor is not None:
+                        from ml.predictor import MLPredictor
+                        self.ml_predictor = MLPredictor.from_file(
+                            _model_path,
+                            symbol=self.cfg.general.symbol,
+                            timeframe=self.cfg.general.timeframe,
+                        )
+                        logger.info("Auto-retrain tamamlandi, yeni model yuklendi.")
+                    else:
+                        logger.info("Auto-retrain tamamlandi.")
+                else:
+                    logger.warning("Auto-retrain basarisiz, eski model kullaniliyor.")
+            except Exception as e:
+                logger.error(f"Auto-retrain hatasi: {e}")
+
+        t = threading.Thread(target=_retrain_worker, daemon=True, name="auto-retrain")
+        t.start()
 
     def stop(self) -> None:
         """Donguyu durdurur."""
