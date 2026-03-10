@@ -86,7 +86,7 @@ def calc_position_size(
 
 # ── Sinyal Birlestirme ────────────────────────────────────────────────────────
 
-def get_combined_signal(df, cfg, regime, ml_predictor=None):
+def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None):
     """
     RSI + PA Range + XGBoost sinyallerini cogunluk oyuyla birlestir.
 
@@ -95,6 +95,10 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None):
         - Cogunluk: en az 2 sinyal ayni yonde ise o yon secilir
         - Guven: oy verenlerin ortalama guveni + her ek oy icin +0.05 bonus
         - Catisma (hepsi farkli): BEKLE
+
+    big_regime: 4h timeframe rejimi (MTF filtresi)
+        - 4h TREND_DOWN iken AL sinyali gelirse -> BEKLE (kontra-trend engeli)
+        - 4h TREND_UP   iken SAT sinyali gelirse -> BEKLE (kontra-trend engeli)
     """
     rsi_cfg = cfg.strategies.rsi
     pa_cfg  = cfg.strategies.pa_range
@@ -160,6 +164,25 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None):
         f"-> {action}({confidence:.2f})"
     )
 
+    # ── MTF Filtresi: 4h trend yonune karsi islem engelle ────────────────────
+    if big_regime is not None and action != "BEKLE":
+        if action == "AL" and big_regime == Regime.TREND_DOWN:
+            logger.info(
+                f"MTF filtre: 4h={big_regime.value} | AL sinyali engellendi (kontra-trend)"
+            )
+            action     = "BEKLE"
+            confidence = 0.0
+        elif action == "SAT" and big_regime == Regime.TREND_UP:
+            logger.info(
+                f"MTF filtre: 4h={big_regime.value} | SAT sinyali engellendi (kontra-trend)"
+            )
+            action     = "BEKLE"
+            confidence = 0.0
+        else:
+            logger.info(
+                f"MTF filtre: 4h={big_regime.value} | {action} trend yonunde, onaylandi"
+            )
+
     return action, round(confidence, 3), rsi_signal, pa_signal, ml_signal
 
 
@@ -197,8 +220,15 @@ class TradingBot:
             symbol    = self.cfg.general.symbol,
             timeframe = self.cfg.general.timeframe,
         )
-        self.cleaner  = OHLCVCleaner()
-        self.detector = MarketRegimeDetector()
+        # MTF: 4h buyuk trend icin ayri fetcher
+        self.fetcher_4h = BinanceFetcher(
+            testnet   = self.cfg.general.testnet,
+            symbol    = self.cfg.general.symbol,
+            timeframe = "4h",
+        )
+        self.cleaner    = OHLCVCleaner()
+        self.detector   = MarketRegimeDetector()
+        self.detector_4h= MarketRegimeDetector()   # 4h rejim dedektoru
 
         self.order_manager    = OrderManager(
             symbol    = self.cfg.general.symbol,
@@ -294,7 +324,7 @@ class TradingBot:
         now = datetime.now(timezone.utc).strftime("%H:%M:%S")
         logger.info(f"--- Tick #{self._iteration} | {now} ---")
 
-        # 1. Veri cek
+        # 1. Veri cek (1h ve 4h paralel)
         df = await asyncio.get_event_loop().run_in_executor(
             None, self._fetch_data
         )
@@ -302,12 +332,21 @@ class TradingBot:
             logger.warning("Veri alinamadi, tick atlaniyor.")
             return
 
+        # MTF: 4h trend verisi (hata olursa None, bot yine de calisir)
+        df_4h = await asyncio.get_event_loop().run_in_executor(
+            None, self._fetch_data_4h
+        )
+        big_regime = None
+        if df_4h is not None and not df_4h.empty:
+            big_regime = self.detector_4h.detect(df_4h)
+
         current_price = float(df["close"].iloc[-1])
         regime        = self.detector.detect(df)
 
         logger.info(
             f"Fiyat: ${current_price:,.2f} | "
-            f"Rejim: {regime.value} | "
+            f"1h Rejim: {regime.value} | "
+            f"4h Rejim: {big_regime.value if big_regime else 'N/A'} | "
             f"Veri: {len(df)} bar"
         )
 
@@ -323,9 +362,9 @@ class TradingBot:
         for position_id, reason in exits:
             self._close_position(position_id, current_price, reason)
 
-        # 3. Sinyal uret (RSI + PA + ML)
+        # 3. Sinyal uret (RSI + PA + ML + 4h MTF filtresi)
         action, confidence, rsi_sig, pa_sig, ml_sig = get_combined_signal(
-            df, self.cfg, regime, self.ml_predictor
+            df, self.cfg, regime, self.ml_predictor, big_regime=big_regime
         )
 
         ml_part = (
@@ -399,14 +438,25 @@ class TradingBot:
         self.save_state()
 
     def _fetch_data(self):
-        """Senkron veri cekimi (executor icinde calisir)."""
+        """Senkron 1h veri cekimi (executor icinde calisir)."""
         try:
             df_raw = self.fetcher.fetch_ohlcv(limit=200)
             if df_raw.empty:
                 return None
             return self.cleaner.clean(df_raw)
         except Exception as e:
-            logger.warning(f"Veri alinamadi: {e}")
+            logger.warning(f"1h veri alinamadi: {e}")
+            return None
+
+    def _fetch_data_4h(self):
+        """MTF: 4h trend verisi cekimi. Hata olursa None doner (bot durdurmaz)."""
+        try:
+            df_raw = self.fetcher_4h.fetch_ohlcv(limit=100)
+            if df_raw.empty:
+                return None
+            return self.cleaner.clean(df_raw)
+        except Exception as e:
+            logger.warning(f"4h MTF verisi alinamadi: {e}")
             return None
 
     def _close_position(

@@ -31,6 +31,8 @@ logger = get_logger(__name__)
 
 # settings.yaml'ın konumu
 CONFIG_PATH = Path(__file__).parent / "settings.yaml"
+# Optuna optimizer ciktisi (varsa settings.yaml uzerine uygulanir)
+OPTIMIZED_PARAMS_PATH = Path(__file__).parent / "optimized_params.yaml"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,6 +142,45 @@ class AppConfig(BaseModel):
 _config_cache: AppConfig | None = None   # Bir kez yükle, hep aynı objeyi döndür
 
 
+def _apply_optimized_params(raw: dict) -> dict:
+    """
+    config/optimized_params.yaml varsa, icindeki degerleri
+    settings.yaml uzerine yazar (override).
+
+    Ornek optimized_params.yaml:
+        rsi:
+          oversold: 29
+          overbought: 60
+          rsi_period: 23
+
+    Bu fonksiyon raw["strategies"]["rsi"] icine bu degerleri ekler.
+    Sadece var olan anahtarlar guncellenir, yeni anahtar eklenmez.
+    """
+    if not OPTIMIZED_PARAMS_PATH.exists():
+        return raw
+
+    with open(OPTIMIZED_PARAMS_PATH, encoding="utf-8") as f:
+        opt = yaml.safe_load(f) or {}
+
+    if not isinstance(opt, dict):
+        return raw
+
+    # strategies altindaki her section icin merge et
+    strategies_raw = raw.get("strategies", {})
+    for section, params in opt.items():
+        if not isinstance(params, dict):
+            continue
+        if section in strategies_raw:
+            strategies_raw[section].update(params)
+            logger.info(
+                f"Optimize parametreler uygulandi: strategies.{section} | "
+                f"Anahtarlar: {list(params.keys())}"
+            )
+
+    raw["strategies"] = strategies_raw
+    return raw
+
+
 def get_config(path: Path = CONFIG_PATH) -> AppConfig:
     """
     settings.yaml'ı okur, doğrular ve AppConfig objesi döndürür.
@@ -164,6 +205,9 @@ def get_config(path: Path = CONFIG_PATH) -> AppConfig:
 
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
+
+    # Optuna optimize parametrelerini uygula (varsa)
+    raw = _apply_optimized_params(raw)
 
     try:
         _config_cache = AppConfig(**raw)
