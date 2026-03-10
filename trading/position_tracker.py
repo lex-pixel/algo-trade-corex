@@ -302,8 +302,9 @@ class PositionTracker:
                 pos.update_price(current_price)
                 total_unrealized += pos.unrealized_pnl
 
-        # Guncel equity
-        equity = self.capital + total_unrealized
+        # Guncel equity (kilitli notional dahil — KillSwitch yanlis alarm vermesin)
+        locked = sum(p.notional for p in self._positions.values())
+        equity = self.capital + locked + total_unrealized
         self._equity_peak = max(self._equity_peak, equity)
 
         # Max drawdown guncelle

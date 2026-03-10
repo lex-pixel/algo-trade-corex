@@ -409,10 +409,16 @@ class TradingBot:
         # 2. Acik pozisyonlarda SL/TP + kill switch kontrol
         capital  = self.position_tracker.capital
         open_pnl = self.position_tracker.update(current_price)["total_unrealized"]
+        # Gercek equity: nakit + kilitli notional + unrealized P&L
+        # (Sadece nakit gonderilirse KillSwitch pozisyon acarken yanlis alarm verir)
+        locked_notional = sum(
+            p.notional for p in self.position_tracker.open_positions()
+        )
+        true_equity = capital + locked_notional + open_pnl
         exits = self.risk_manager.check_exit_conditions(
             position_tracker = self.position_tracker,
             current_price    = current_price,
-            current_capital  = capital,
+            current_capital  = true_equity,
             open_pnl         = open_pnl,
         )
         for position_id, reason in exits:
@@ -448,7 +454,7 @@ class TradingBot:
         decision = self.risk_manager.evaluate_signal(
             action               = action,
             confidence           = confidence,
-            current_capital      = capital,
+            current_capital      = true_equity,
             open_pnl             = open_pnl,
             price                = current_price,
             atr                  = atr_val,

@@ -190,8 +190,8 @@ class KillSwitch:
         # Equity peak guncelle
         self._equity_peak = max(self._equity_peak, equity)
 
-        # Metrikleri hesapla
-        daily_loss_pct  = self._daily_loss_pct(current_capital)
+        # Metrikleri hesapla — equity kullan (current_capital nakit-only olabilir)
+        daily_loss_pct  = self._daily_loss_pct(equity)
         drawdown_pct    = self._drawdown_pct(equity)
 
         # Seviyeyi belirle
