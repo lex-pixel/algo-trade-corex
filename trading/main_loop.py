@@ -684,6 +684,11 @@ class TradingBot:
             # Equity gecmisini geri yukle
             self._equity_history = state.get("equity_history", [])
 
+            # KillSwitch gun-baslangic sermayesini guncelle
+            # (yoksa yuklenen sermaye ile initial_capital arasindaki fark
+            #  yanlis gunluk zarar olarak algilanir)
+            self.risk_manager.update_day_start(pt.capital)
+
             saved_at = state.get("saved_at", "?")
             n_trades = len(state.get("trades", []))
             logger.info(
