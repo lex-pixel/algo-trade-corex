@@ -57,14 +57,23 @@ def build_report(state: dict, output_path: Path) -> None:
     initial_cap  = state.get("initial_capital", 10000.0)
     capital      = state.get("capital", initial_cap)
     equity_peak  = state.get("equity_peak", capital)
-    max_drawdown = state.get("max_drawdown", 0.0)
+    max_drawdown = state.get("max_drawdown", 0.0)  # Zaten yuzde olarak sakli (ornek: 10.04 = %10.04)
     iteration    = state.get("iteration", 0)
     saved_at     = state.get("saved_at", "?")[:16].replace("T", " ")
     trades       = state.get("trades", [])
     eq_history   = state.get("equity_history", [])
 
     # ── Hesaplamalar ──────────────────────────────────────────────────────────
-    return_pct   = (capital - initial_cap) / initial_cap * 100
+    # Gercek equity: capital + acik pozisyon notional + unrealized
+    open_positions = state.get("open_positions", [])
+    locked_notional = sum(
+        p.get("entry_price", 0) * p.get("quantity", 0) for p in open_positions
+    )
+    # equity_history son degerinden unrealized PnL hesapla
+    last_eq_val = eq_history[-1]["equity"] if eq_history else capital
+    true_equity  = capital + locked_notional + (last_eq_val - capital) if locked_notional > 0 else capital
+
+    return_pct   = (true_equity - initial_cap) / initial_cap * 100
     n_trades     = len(trades)
     wins         = [t for t in trades if t.get("realized_pnl", 0) > 0]
     losses       = [t for t in trades if t.get("realized_pnl", 0) <= 0]
@@ -72,6 +81,11 @@ def build_report(state: dict, output_path: Path) -> None:
     total_pnl    = sum(t.get("realized_pnl", 0) for t in trades)
     avg_win      = sum(t["realized_pnl"] for t in wins) / len(wins) if wins else 0
     avg_loss     = sum(t["realized_pnl"] for t in losses) / len(losses) if losses else 0
+
+    # equity_history: bug kaynaklı yanlis dip degerlerini filtrele
+    # (initial_cap'in %85'inden kucuk degerler notional-lock hatasindan)
+    threshold = initial_cap * 0.85
+    eq_history = [e for e in eq_history if e["equity"] >= threshold]
 
     # ── Subplots ──────────────────────────────────────────────────────────────
     fig = make_subplots(
@@ -160,7 +174,7 @@ def build_report(state: dict, output_path: Path) -> None:
                     f"${capital:,.2f}",
                     f"%{return_pct:+.2f}",
                     f"${equity_peak:,.2f}",
-                    f"%{max_drawdown*100:.2f}",
+                    f"%{max_drawdown:.2f}",
                     str(n_trades),
                     f"%{win_rate:.1f}" if n_trades > 0 else "N/A",
                     f"${total_pnl:+.2f}" if n_trades > 0 else "N/A",
@@ -285,7 +299,7 @@ def print_terminal_summary(state: dict) -> None:
     print(f"  Sermaye    : ${initial_cap:,.2f} -> ${capital:,.2f}")
     print(f"  Getiri     : %{return_pct:+.2f}")
     print(f"  Equity Tepe: ${equity_peak:,.2f}")
-    print(f"  Max DD     : %{max_drawdown*100:.2f}")
+    print(f"  Max DD     : %{max_drawdown:.2f}")
     print(f"  Toplam Tick: {iteration}")
     print(f"  Toplam Islem: {n_trades}")
     if n_trades > 0:
