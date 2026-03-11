@@ -106,7 +106,8 @@ def retrain(days: int = 365, quiet: bool = False) -> bool:
         predictor = MLPredictor(symbol="BTC/USDT", timeframe="1h")
 
         logger.info("Model egitiliyor...")
-        cv_acc = predictor.train(df_train)
+        cv_results = predictor.train(df_train)
+        cv_acc = cv_results.get("avg_accuracy", 0.0)
 
         logger.info(f"Egitim tamamlandi | CV Accuracy: {cv_acc:.3f}")
 
