@@ -119,6 +119,9 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_
         rsi_oversold=pa_cfg.rsi_oversold, rsi_overbought=pa_cfg.rsi_overbought,
         proximity_pct=pa_cfg.proximity_pct, stop_pct=pa_cfg.stop_pct,
         tp_pct=pa_cfg.tp_pct, use_regime_filter=pa_cfg.use_regime_filter,
+        volume_confirm_mult=pa_cfg.volume_confirm_mult,
+        fakeout_filter=pa_cfg.fakeout_filter,
+        rsi_divergence=pa_cfg.rsi_divergence,
     )
 
     rsi_signal = rsi_strategy.generate_signal(df)
@@ -413,7 +416,6 @@ class TradingBot:
         capital  = self.position_tracker.capital
         open_pnl = self.position_tracker.update(current_price)["total_unrealized"]
         # Gercek equity: nakit + kilitli notional + unrealized P&L
-        # (Sadece nakit gonderilirse KillSwitch pozisyon acarken yanlis alarm verir)
         locked_notional = sum(
             p.notional for p in self.position_tracker.open_positions()
         )
@@ -426,6 +428,53 @@ class TradingBot:
         )
         for position_id, reason in exits:
             self._close_position(position_id, current_price, reason)
+
+        # 2b. Trailing stop kontrol (breakeven + partial close)
+        ts_cfg = self.cfg.trailing_stop
+        if ts_cfg.enabled:
+            trail_actions = self.position_tracker.check_trailing_stops(
+                current_price      = current_price,
+                breakeven_pct      = ts_cfg.breakeven_pct,
+                partial_close_pct  = ts_cfg.partial_close_pct,
+                trail_sl_pct       = ts_cfg.trail_sl_pct,
+            )
+            for pid, action, data in trail_actions:
+                pos = self.position_tracker.get_position(pid)
+                if pos is None:
+                    continue
+                if action == "BREAKEVEN":
+                    # SL entry'ye cek
+                    pos.stop_loss = data["new_sl"]
+                    pos.breakeven_triggered = True
+                    logger.info(
+                        f"Trailing BREAKEVEN uygulandı: {pos.symbol} "
+                        f"SL -> ${data['new_sl']:,.2f} (+{data['pnl_pct']:.2f}%)"
+                    )
+                elif action == "PARTIAL_CLOSE":
+                    # Pozisyonun yarisini kapat
+                    close_qty = data["close_quantity"]
+                    close_side = "sell" if pos.direction == "LONG" else "buy"
+                    order = self.order_manager.place_market_order(
+                        side          = close_side,
+                        quantity      = close_qty,
+                        current_price = current_price,
+                    )
+                    self.position_tracker.partial_close_position(
+                        position_id  = pid,
+                        close_quantity = close_qty,
+                        exit_price   = order.filled_price or current_price,
+                        exit_reason  = "TRAILING_PARTIAL",
+                        exit_fee     = order.fee,
+                    )
+                    # Kalan yarinin SL'ini guncelle
+                    remaining_pos = self.position_tracker.get_position(pid)
+                    if remaining_pos:
+                        remaining_pos.stop_loss = data["new_sl"]
+                        remaining_pos.breakeven_triggered = True
+                    logger.info(
+                        f"Trailing PARTIAL_CLOSE: {close_qty:.6f} {pos.symbol} "
+                        f"kapatildi, SL -> ${data['new_sl']:,.2f}"
+                    )
 
         # 3. Sinyal uret (RSI + PA + ML + 4h trend filtresi + 15m giris zamanlama)
         action, confidence, rsi_sig, pa_sig, ml_sig = get_combined_signal(
@@ -469,29 +518,41 @@ class TradingBot:
 
         if decision.approved:
             direction = "LONG" if action == "AL" else "SHORT"
+            symbol    = self.cfg.general.symbol
 
-            # Emir gonder (RiskManager'dan gelen miktar)
-            order = self.order_manager.place_market_order(
-                side          = "buy" if direction == "LONG" else "sell",
-                quantity      = decision.quantity,
-                current_price = current_price,
+            # Ayni yonde zaten acik pozisyon var mi? (LONG+LONG veya SHORT+SHORT engelle)
+            already_open = (
+                direction == "LONG"  and self.position_tracker.has_long_position(symbol)
+                or direction == "SHORT" and self.position_tracker.has_short_position(symbol)
             )
+            if already_open:
+                logger.info(
+                    f"Pozisyon acilmadi: {direction} {symbol} zaten acik. "
+                    f"(LONG+SHORT ayni anda desteklenir, ayni yon desteklenmez)"
+                )
+            else:
+                # Emir gonder (RiskManager'dan gelen miktar)
+                order = self.order_manager.place_market_order(
+                    side          = "buy" if direction == "LONG" else "sell",
+                    quantity      = decision.quantity,
+                    current_price = current_price,
+                )
 
-            # Pozisyon ac (RiskManager'dan gelen SL/TP)
-            self.position_tracker.open_position(
-                symbol      = self.cfg.general.symbol,
-                direction   = direction,
-                entry_price = order.filled_price or current_price,
-                quantity    = decision.quantity,
-                stop_loss   = decision.stop_loss,
-                take_profit = decision.take_profit,
-                strategy    = f"RSI+PA+ML ({action})" if self.ml_predictor else f"RSI+PA ({action})",
-                order_id    = order.order_id,
-                entry_fee   = order.fee,
-            )
+                # Pozisyon ac (RiskManager'dan gelen SL/TP)
+                self.position_tracker.open_position(
+                    symbol      = symbol,
+                    direction   = direction,
+                    entry_price = order.filled_price or current_price,
+                    quantity    = decision.quantity,
+                    stop_loss   = decision.stop_loss,
+                    take_profit = decision.take_profit,
+                    strategy    = f"RSI+PA+ML ({action})" if self.ml_predictor else f"RSI+PA ({action})",
+                    order_id    = order.order_id,
+                    entry_fee   = order.fee,
+                )
 
-            # Kill switch'e islem kaydet
-            self.risk_manager.record_trade_executed()
+                # Kill switch'e islem kaydet
+                self.risk_manager.record_trade_executed()
 
         # Guncel durumu logla
         summary = self.position_tracker.update(current_price)

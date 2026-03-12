@@ -58,20 +58,26 @@ class FeatureEngineer:
     Ham OHLCV DataFrame'inden ML icin ozellik matrisi uretir.
 
     Parametreler:
-        horizon_bars    : kac bar sonrasinin getirisini tahmin etmek istiyoruz
-        threshold_pct   : bu yuzde esigi asinca AL/SAT siniflandirilir
-        min_rows        : feature uretimi icin minimum satir sayisi
+        horizon_bars     : kac bar sonrasinin getirisini tahmin etmek istiyoruz
+        threshold_pct    : bu yuzde esigi asinca AL/SAT siniflandirilir
+        min_rows         : feature uretimi icin minimum satir sayisi
+        use_external_data: Fear & Greed, BTC dominance vs. (sabit deger olarak eklenir)
     """
 
     def __init__(
         self,
-        horizon_bars: int   = 3,
+        horizon_bars: int    = 3,
         threshold_pct: float = 0.3,
         min_rows: int        = 100,
+        use_external_data: bool = True,
     ):
-        self.horizon_bars  = horizon_bars
-        self.threshold_pct = threshold_pct
-        self.min_rows      = min_rows
+        self.horizon_bars      = horizon_bars
+        self.threshold_pct     = threshold_pct
+        self.min_rows          = min_rows
+        self.use_external_data = use_external_data
+
+        # External data fetcher — lazy init
+        self._ext_fetcher = None
 
     # ── Ana Metod ─────────────────────────────────────────────────────────────
 
@@ -107,6 +113,8 @@ class FeatureEngineer:
         feat = self._add_rolling_features(feat, df)
         feat = self._add_lag_features(feat, df)
         feat = self._add_candle_features(feat, df)
+        if self.use_external_data:
+            feat = self._add_external_features(feat, df)
 
         # ── Hedef etiketi uret ────────────────────────────────────────────────
         forward_ret = df["close"].pct_change(self.horizon_bars).shift(-self.horizon_bars) * 100
@@ -317,6 +325,50 @@ class FeatureEngineer:
         # Artis mi dusus mu (binary)
         feat["candle_bullish"] = (close > open_).astype(int)
 
+        return feat
+
+    def _add_external_features(self, feat: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Dis kaynaklardan gelen verileri sabit feature olarak ekler.
+
+        Fear & Greed Index: 0-100 (korku/acgozluluk barometresi)
+        BTC Dominance: 0-100 (BTC piyasa hakimiyeti yuzdesi)
+
+        API'ye ulasilamazsa 50 (notral) kullaniriz — modeli bozmaz.
+        """
+        if self._ext_fetcher is None:
+            try:
+                from ml.external_data import ExternalDataFetcher
+                self._ext_fetcher = ExternalDataFetcher(cache_ttl=3600)
+            except Exception:
+                self._ext_fetcher = None
+
+        fear_greed    = 50.0   # varsayilan: notral
+        btc_dominance = 50.0   # varsayilan: notral
+
+        if self._ext_fetcher is not None:
+            try:
+                ext = self._ext_fetcher.fetch_all()
+                if ext.get("fear_greed") is not None:
+                    fear_greed = float(ext["fear_greed"])
+                if ext.get("btc_dominance") is not None:
+                    btc_dominance = float(ext["btc_dominance"])
+            except Exception as e:
+                logger.debug(f"External feature alinamadi, varsayilan kullaniliyor: {e}")
+
+        # Tum satirlara ayni degeri yaz (taze anlık veri — makul bir yaklasim)
+        feat["fear_greed_norm"]    = fear_greed / 100.0     # 0-1 normalizasyon
+        feat["btc_dominance_norm"] = btc_dominance / 100.0  # 0-1 normalizasyon
+
+        # RSI uyumsuzlugu ozelligi: Fear & Greed ile RSI arasindaki fark
+        # (RSI yuksek ama korku varsa: uyumsuzluk sinyali)
+        if "rsi_14" in feat.columns:
+            feat["fg_rsi_diverge"] = feat["fear_greed_norm"] - feat["rsi_14"]
+
+        logger.debug(
+            f"External features eklendi | "
+            f"F&G: {fear_greed:.0f} | BTC Dom: {btc_dominance:.1f}%"
+        )
         return feat
 
     # ── Yardimci: Label Isimleri ──────────────────────────────────────────────

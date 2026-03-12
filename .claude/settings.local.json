@@ -1,8 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \"import PyPDF2; pdf = PyPDF2.PdfReader\\(r''c:\\\\Users\\\\rk209\\\\Desktop\\\\Cloud-Algo\\\\Algo_Trade_Codex_Prompt_Rehberi.txt.pdf''\\); [print\\(f''=== PAGE {i+1} ===\\\\n'', pdf.pages[i].extract_text\\(\\)\\) for i in range\\(len\\(pdf.pages\\)\\)]\")",
-      "Bash(python -c \":*)"
+      "Bash(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Read(*)",
+      "Glob(*)",
+      "Grep(*)"
     ]
   }
 }

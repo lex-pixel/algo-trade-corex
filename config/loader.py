@@ -84,16 +84,19 @@ class RSIConfig(BaseModel):
 
 
 class PARangeConfig(BaseModel):
-    enabled:            bool  = True
-    lookback:           int   = Field(default=50, ge=10, le=500)
-    rsi_period:         int   = Field(default=14, ge=2, le=100)
-    rsi_oversold:       float = Field(default=40.0, ge=0, le=100)
-    rsi_overbought:     float = Field(default=60.0, ge=0, le=100)
-    proximity_pct:      float = Field(default=0.02, gt=0, le=0.2)
-    stop_pct:           float = Field(default=0.015, gt=0, le=0.1)
-    tp_pct:             float = Field(default=0.030, gt=0, le=0.5)
-    min_confidence:     float = Field(default=0.05, ge=0, le=1.0)
-    use_regime_filter:  bool  = True
+    enabled:              bool  = True
+    lookback:             int   = Field(default=50, ge=10, le=500)
+    rsi_period:           int   = Field(default=14, ge=2, le=100)
+    rsi_oversold:         float = Field(default=40.0, ge=0, le=100)
+    rsi_overbought:       float = Field(default=60.0, ge=0, le=100)
+    proximity_pct:        float = Field(default=0.02, gt=0, le=0.2)
+    stop_pct:             float = Field(default=0.015, gt=0, le=0.1)
+    tp_pct:               float = Field(default=0.030, gt=0, le=0.5)
+    min_confidence:       float = Field(default=0.05, ge=0, le=1.0)
+    use_regime_filter:    bool  = True
+    volume_confirm_mult:  float = Field(default=1.5, ge=1.0, le=5.0)  # hacim onaylama katsayisi
+    fakeout_filter:       bool  = True    # kapanisa gore kirilim dogrulama
+    rsi_divergence:       bool  = True    # RSI uyumsuzlugu tespiti
 
 
 class StrategiesConfig(BaseModel):
@@ -105,7 +108,14 @@ class RiskConfig(BaseModel):
     max_position_risk:  float = Field(default=0.02, gt=0, le=0.5)
     max_daily_loss:     float = Field(default=0.05, gt=0, le=1.0)
     max_drawdown:       float = Field(default=0.15, gt=0, le=1.0)
-    max_open_positions: int   = Field(default=1, ge=1, le=20)
+    max_open_positions: int   = Field(default=2, ge=1, le=20)   # 2: LONG+SHORT ayni anda
+
+
+class TrailingStopConfig(BaseModel):
+    enabled:           bool  = True
+    breakeven_pct:     float = Field(default=0.015, gt=0, le=0.5)  # %1.5 karda breakeven
+    partial_close_pct: float = Field(default=0.030, gt=0, le=0.5)  # %3 karda yarisini kapat
+    trail_sl_pct:      float = Field(default=0.015, gt=0, le=0.5)  # kalan yarim SL mesafesi
 
 
 class MTFConfig(BaseModel):
@@ -135,12 +145,13 @@ class LoggingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     """Tüm konfigürasyonu bir arada tutan ana sınıf."""
-    general:    GeneralConfig    = Field(default_factory=GeneralConfig)
-    strategies: StrategiesConfig = Field(default_factory=StrategiesConfig)
-    risk:       RiskConfig       = Field(default_factory=RiskConfig)
-    mtf:        MTFConfig        = Field(default_factory=MTFConfig)
-    data:       DataConfig       = Field(default_factory=DataConfig)
-    logging:    LoggingConfig    = Field(default_factory=LoggingConfig)
+    general:       GeneralConfig       = Field(default_factory=GeneralConfig)
+    strategies:    StrategiesConfig    = Field(default_factory=StrategiesConfig)
+    risk:          RiskConfig          = Field(default_factory=RiskConfig)
+    trailing_stop: TrailingStopConfig  = Field(default_factory=TrailingStopConfig)
+    mtf:           MTFConfig           = Field(default_factory=MTFConfig)
+    data:          DataConfig          = Field(default_factory=DataConfig)
+    logging:       LoggingConfig       = Field(default_factory=LoggingConfig)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

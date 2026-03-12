@@ -1,60 +1,67 @@
 # =============================================
-# ALGO TRADE CODEX — Ana Konfigürasyon
-#
-# Bu dosyayı değiştirerek kodu hiç açmadan
-# tüm strateji parametrelerini yönetebilirsin.
+# ALGO TRADE CODEX — Ana Konfigurasyon
 # =============================================
 
 # --- GENEL AYARLAR ---
 general:
-  symbol: "BTC/USDT"        # İşlem çifti (şimdilik tek parite)
+  symbol: "BTC/USDT"        # Islem cifti
   timeframe: "1h"           # Mum zaman dilimi: 1m, 5m, 15m, 1h, 4h, 1d
   exchange: "binance"       # binance | bybit
-  testnet: true             # true = sahte para, false = gerçek para (DİKKAT!)
-  dry_run: true             # true = sinyal üret ama emir gönderme (paper trading)
+  testnet: true             # true = sahte para, false = gercek para (DIKKAT!)
+  dry_run: true             # true = sinyal uret ama emir gonderme (paper trading)
 
-# --- STRATEJİLER ---
+# --- STRATEJILER ---
 strategies:
 
   rsi:
     enabled: true
     rsi_period: 14          # RSI hesaplama periyodu (standart: 14)
-    oversold: 35            # Bu değerin altı → AL sinyali bölgesi (eski: 30, daraltıldı)
-    overbought: 65          # Bu değerin üstü → SAT sinyali bölgesi (eski: 70, daraltıldı)
-    stop_pct: 0.015         # Stop-loss yüzdesi: %1.5
-    tp_pct: 0.030           # Take-profit yüzdesi: %3.0
-    min_confidence: 0.05    # Bu güven skorunun altındaki sinyaller işleme alınmaz
+    oversold: 35            # Bu degerin alti -> AL sinyali bolgesi
+    overbought: 65          # Bu degerin ustu -> SAT sinyali bolgesi
+    stop_pct: 0.015         # Stop-loss yuzdesi: %1.5
+    tp_pct: 0.030           # Take-profit yuzdesi: %3.0
+    min_confidence: 0.05    # Bu guven skorunun altindaki sinyaller isleme alinmaz
 
   pa_range:
     enabled: true
-    lookback: 50            # Destek/direnç için kaç mum geriye bakılır
+    lookback: 50            # Destek/direnc icin kac mum geriye bakilir
     rsi_period: 14          # RSI periyodu
-    rsi_oversold: 40        # Bu değerin altı → desteğe yakınken AL
-    rsi_overbought: 60      # Bu değerin üstü → dirence yakınken SAT
-    proximity_pct: 0.02     # Desteğe/dirence %2 yakınlık eşiği
+    rsi_oversold: 40        # Bu degerin alti -> destege yakinken AL
+    rsi_overbought: 60      # Bu degerin ustu -> direncle yakinken SAT
+    proximity_pct: 0.02     # Desteye/direncle %2 yakinlik esigi
     stop_pct: 0.015         # Stop-loss %1.5
     tp_pct: 0.030           # Take-profit %3.0
-    min_confidence: 0.05    # Minimum güven skoru
+    min_confidence: 0.05    # Minimum guven skoru
     use_regime_filter: true # ADX > 25 trend piyasada sinyali durdur
+    volume_confirm_mult: 1.5  # Hacim onaylama: cari hacim bu kat ortalama uzerinde olmali
+    fakeout_filter: true      # Kapanisa gore kilrim dogrulama (fakeout engelle)
+    rsi_divergence: true      # RSI uyumsuzlugu tespiti (ekstra guven bonusu)
 
-# --- RİSK YÖNETİMİ ---
+# --- RISK YONETIMI ---
 risk:
-  max_position_risk: 0.02   # Pozisyon başına max sermaye riski: %2
-  max_daily_loss: 0.05      # Günlük max kayıp (Kill Switch L2): %5
+  max_position_risk: 0.02   # Pozisyon basina max sermaye riski: %2
+  max_daily_loss: 0.05      # Gunluk max kayip (Kill Switch L2): %5
   max_drawdown: 0.15        # Max drawdown (Kill Switch L3): %15
-  max_open_positions: 1     # Aynı anda max açık pozisyon (şimdilik 1)
+  max_open_positions: 2     # Ayni anda max acik pozisyon: 2 (LONG + SHORT ayni anda)
 
-# --- VERİ AYARLARI ---
+# --- TRAILING STOP ---
+trailing_stop:
+  enabled: true
+  breakeven_pct: 0.015      # %1.5 karda SL entry'ye cek (breakeven)
+  partial_close_pct: 0.030  # %3 karda pozisyonun yarisini kapat
+  trail_sl_pct: 0.015       # Kalan yarinin SL mesafesi (entry + %1.5)
+
+# --- VERI AYARLARI ---
 data:
-  history_days: 90          # Kaç günlük geçmiş veri çekilsin
-  cache_size: 500           # Redis'te kaç mum önbelleklensin
-  parquet_dir: "data/raw"   # Ham veri kayıt klasörü
+  history_days: 90          # Kac gunluk gecmis veri cekilsin
+  cache_size: 500           # Redis'te kac mum onbelleklensin
+  parquet_dir: "data/raw"   # Ham veri kayit klasoru
 
 # --- MTF (Multi-Timeframe) AYARLARI ---
 mtf:
   penalty_pct: 0.30           # 4h kontra-trend: guven bu oranda dusurulur (0.30 = -%30)
-  entry_15m_overbought: 78    # 15m RSI bu degerin ustunde ise AL engellenir (gec kalindi)
-  entry_15m_oversold: 22      # 15m RSI bu degerin altinda ise SAT engellenir (gec kalindi)
+  entry_15m_overbought: 78    # 15m RSI bu degerin ustunde ise AL engellenir
+  entry_15m_oversold: 22      # 15m RSI bu degerin altinda ise SAT engellenir
   retrain_every: 720          # Her kac tick'te bir ML modeli yeniden egitilir (~30 gun)
 
 # --- LOG ---

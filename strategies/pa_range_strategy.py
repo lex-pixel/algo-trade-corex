@@ -64,6 +64,9 @@ class PARangeStrategy(BaseStrategy):
         stop_pct: float = 0.015,
         tp_pct: float = 0.030,
         use_regime_filter: bool = True,
+        volume_confirm_mult: float = 1.5,   # hacim onaylama: cari hacim bu kat ortalama uzerinde olmali
+        fakeout_filter: bool = True,        # kapanisa gore kirilim dogrulama
+        rsi_divergence: bool = True,        # RSI uyumsuzlugu tespiti
     ):
         """
         Args:
@@ -74,14 +77,17 @@ class PARangeStrategy(BaseStrategy):
             use_regime_filter: True ise trend piyasada sinyal üretmez
         """
         super().__init__(name="PARangeStrategy", symbol=symbol, timeframe=timeframe)
-        self.lookback          = lookback
-        self.rsi_period        = rsi_period
-        self.rsi_oversold      = rsi_oversold
-        self.rsi_overbought    = rsi_overbought
-        self.proximity_pct     = proximity_pct
-        self.stop_pct          = stop_pct
-        self.tp_pct            = tp_pct
-        self.use_regime_filter = use_regime_filter
+        self.lookback             = lookback
+        self.rsi_period           = rsi_period
+        self.rsi_oversold         = rsi_oversold
+        self.rsi_overbought       = rsi_overbought
+        self.proximity_pct        = proximity_pct
+        self.stop_pct             = stop_pct
+        self.tp_pct               = tp_pct
+        self.use_regime_filter    = use_regime_filter
+        self.volume_confirm_mult  = volume_confirm_mult
+        self.fakeout_filter       = fakeout_filter
+        self.rsi_divergence       = rsi_divergence
 
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
@@ -157,7 +163,69 @@ class PARangeStrategy(BaseStrategy):
             f"Konum: %{price_position*100:.1f} | RSI: {rsi:.1f}"
         )
 
-        # ── Adım 5: Sinyal Kararı ─────────────────────────────────────────
+        # ── Adım 5: Volume Confirmation ───────────────────────────────────
+        # Hacim ortalamasi: son 20 mum (son mum haric — bias onleme)
+        vol_ma_20 = float(df["volume"].iloc[-21:-1].mean()) if len(df) >= 22 else None
+        current_vol = float(df["volume"].iloc[-1])
+        volume_ok = True
+        if vol_ma_20 and vol_ma_20 > 0:
+            vol_ratio = current_vol / vol_ma_20
+            volume_ok = vol_ratio >= self.volume_confirm_mult
+            if not volume_ok:
+                logger.debug(
+                    f"Hacim filtresi: {vol_ratio:.2f}x < {self.volume_confirm_mult}x "
+                    f"(gerekli onay yok)"
+                )
+
+        # ── Adım 6: Fakeout Filter ────────────────────────────────────────
+        # Kapanış fiyatı desteğe/dirence yakın olmalı (sadece gölge yok)
+        last_close = float(df["close"].iloc[-1])
+
+        def fakeout_al_ok() -> bool:
+            """LONG için: kapaniş yakın = destek bölgesinde kapanmali"""
+            if not self.fakeout_filter:
+                return True
+            # Kapanisin desteğe yakınlığı: kapanış <= destek + prox_range ise gerçek
+            prox_range = range_width * self.proximity_pct
+            return last_close <= support + prox_range
+
+        def fakeout_sat_ok() -> bool:
+            """SHORT için: kapaniş yakın = direnc bölgesinde kapanmali"""
+            if not self.fakeout_filter:
+                return True
+            prox_range = range_width * self.proximity_pct
+            return last_close >= resistance - prox_range
+
+        # ── Adım 7: RSI Divergence Bonus ──────────────────────────────────
+        # Bullish divergence: fiyat yeni dip yaparken RSI yapmiyorsa — AL güclendirir
+        # Bearish divergence: fiyat yeni zirve yaparken RSI yapmiyorsa — SAT güçlendirir
+        divergence_bonus = 0.0
+        if self.rsi_divergence and len(df) >= self.lookback + self.rsi_period + 5:
+            try:
+                import pandas_ta as _ta
+                rsi_series = _ta.rsi(df["close"], length=self.rsi_period)
+                if rsi_series is not None and len(rsi_series) >= 10:
+                    # Son 5 bar vs onceki 5 bar karsilastir
+                    close_now = float(df["close"].iloc[-3:].min())
+                    close_prev = float(df["close"].iloc[-8:-3].min())
+                    rsi_now   = float(rsi_series.iloc[-3:].min())
+                    rsi_prev  = float(rsi_series.iloc[-8:-3].min())
+                    # Bullish divergence: fiyat dip yapti, RSI yapmadi
+                    if close_now < close_prev and rsi_now > rsi_prev:
+                        divergence_bonus = 0.10
+                        logger.debug(f"Bullish RSI divergence tespit edildi, bonus: +{divergence_bonus}")
+                    # Bearish divergence: fiyat zirve yapti, RSI yapmadi
+                    close_peak_now  = float(df["close"].iloc[-3:].max())
+                    close_peak_prev = float(df["close"].iloc[-8:-3].max())
+                    rsi_peak_now    = float(rsi_series.iloc[-3:].max())
+                    rsi_peak_prev   = float(rsi_series.iloc[-8:-3].max())
+                    if close_peak_now > close_peak_prev and rsi_peak_now < rsi_peak_prev:
+                        divergence_bonus = 0.10
+                        logger.debug(f"Bearish RSI divergence tespit edildi, bonus: +{divergence_bonus}")
+            except Exception as _e:
+                logger.debug(f"RSI divergence hesaplanamadi: {_e}")
+
+        # ── Adım 8: Sinyal Kararı ─────────────────────────────────────────
 
         # AL: Fiyat desteğe yakın VE RSI aşırı satım bölgesinde
         if near_support and rsi < self.rsi_oversold:
@@ -165,20 +233,38 @@ class PARangeStrategy(BaseStrategy):
             if _blocked_action == "AL":
                 logger.debug(f"AL engellendi: TREND_DOWN rejimi | RSI: {rsi:.1f}")
                 return Signal(action="BEKLE", confidence=0.0, reason="TREND_DOWN: AL engellendi")
+
+            # Fakeout kontrolu
+            if not fakeout_al_ok():
+                logger.debug(
+                    f"AL engellendi: fakeout filtresi | kapaniş {last_close:,.0f} "
+                    f"destek bölgesi disinda (destek: {support:,.0f})"
+                )
+                return Signal(action="BEKLE", confidence=0.0,
+                              reason="Fakeout: kapaniş destek bölgesi disinda")
+
             confidence = self._calc_confidence_al(price, support, resistance, rsi)
+            # Volume onay bonusu
+            if volume_ok and vol_ma_20:
+                confidence = min(1.0, confidence + 0.08)
+            # RSI divergence bonusu
+            confidence = min(1.0, confidence + divergence_bonus)
+
             signal = Signal(
                 action="AL",
-                confidence=confidence,
-                stop_loss=support * (1 - self.stop_pct),           # Desteğin altı
-                take_profit=price + (range_width * 0.5),           # Range'in ortası
+                confidence=round(confidence, 3),
+                stop_loss=support * (1 - self.stop_pct),
+                take_profit=price + (range_width * 0.5),
                 reason=(
                     f"Destege yakin: {price:,.0f} ~ {support:,.0f} | "
-                    f"RSI: {rsi:.1f} < {self.rsi_oversold}"
+                    f"RSI: {rsi:.1f} < {self.rsi_oversold} | "
+                    f"Vol: {'OK' if volume_ok else 'ZAYIF'}"
                 )
             )
             logger.info(
                 f"SINYAL AL | {self.symbol} | Fiyat: {price:,.2f} | "
-                f"Destek: {support:,.2f} | RSI: {rsi:.1f} | Guven: {confidence:.2f}"
+                f"Destek: {support:,.2f} | RSI: {rsi:.1f} | Guven: {confidence:.2f} | "
+                f"Vol: {'OK' if volume_ok else 'ZAYIF'}"
             )
             return signal
 
@@ -188,20 +274,38 @@ class PARangeStrategy(BaseStrategy):
             if _blocked_action == "SAT":
                 logger.debug(f"SAT engellendi: TREND_UP rejimi | RSI: {rsi:.1f}")
                 return Signal(action="BEKLE", confidence=0.0, reason="TREND_UP: SAT engellendi")
+
+            # Fakeout kontrolu
+            if not fakeout_sat_ok():
+                logger.debug(
+                    f"SAT engellendi: fakeout filtresi | kapaniş {last_close:,.0f} "
+                    f"direnc bölgesi disinda (direnc: {resistance:,.0f})"
+                )
+                return Signal(action="BEKLE", confidence=0.0,
+                              reason="Fakeout: kapaniş direnc bölgesi disinda")
+
             confidence = self._calc_confidence_sat(price, support, resistance, rsi)
+            # Volume onay bonusu
+            if volume_ok and vol_ma_20:
+                confidence = min(1.0, confidence + 0.08)
+            # RSI divergence bonusu
+            confidence = min(1.0, confidence + divergence_bonus)
+
             signal = Signal(
                 action="SAT",
-                confidence=confidence,
-                stop_loss=resistance * (1 + self.stop_pct),        # Direncin üstü
-                take_profit=price - (range_width * 0.5),           # Range'in ortası
+                confidence=round(confidence, 3),
+                stop_loss=resistance * (1 + self.stop_pct),
+                take_profit=price - (range_width * 0.5),
                 reason=(
                     f"Direnca yakin: {price:,.0f} ~ {resistance:,.0f} | "
-                    f"RSI: {rsi:.1f} > {self.rsi_overbought}"
+                    f"RSI: {rsi:.1f} > {self.rsi_overbought} | "
+                    f"Vol: {'OK' if volume_ok else 'ZAYIF'}"
                 )
             )
             logger.info(
                 f"SINYAL SAT | {self.symbol} | Fiyat: {price:,.2f} | "
-                f"Direnc: {resistance:,.2f} | RSI: {rsi:.1f} | Guven: {confidence:.2f}"
+                f"Direnc: {resistance:,.2f} | RSI: {rsi:.1f} | Guven: {confidence:.2f} | "
+                f"Vol: {'OK' if volume_ok else 'ZAYIF'}"
             )
             return signal
 

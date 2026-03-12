@@ -81,6 +81,11 @@ class Position:
     max_unrealized: float = 0.0   # En iyi noktadaki unrealized PnL
     min_unrealized: float = 0.0   # En kotu noktadaki unrealized PnL
 
+    # Trailing stop alanlari
+    breakeven_triggered: bool  = False  # SL entry'ye cekildi mi?
+    partial_closed:      bool  = False  # Pozisyonun yarisi kapatildi mi?
+    partial_quantity:    float = 0.0    # Kapatilan miktar (partial close)
+
     @property
     def notional(self) -> float:
         """Pozisyonun USDT degeri (giris fiyatina gore)."""
@@ -410,6 +415,161 @@ class PositionTracker:
             f"Sebep: {exit_reason}"
         )
         return trade
+
+    def partial_close_position(
+        self,
+        position_id: str,
+        close_quantity: float,
+        exit_price: float,
+        exit_reason: str = "PARTIAL_CLOSE",
+        exit_fee: float  = 0.0,
+    ) -> ClosedTrade | None:
+        """
+        Pozisyonun bir kismini kapatir, kalan devam eder.
+
+        Ornek: 0.001 BTC long pozisyonu var, 0.0005 kapatilir, 0.0005 devam eder.
+        Kapatilan kisim icin ClosedTrade kaydedilir.
+
+        Returns:
+            ClosedTrade (kapatilan kisim icin) veya None
+        """
+        pos = self._positions.get(position_id)
+        if not pos:
+            logger.warning(f"Partial close: pozisyon bulunamadi {position_id[:8]}...")
+            return None
+
+        if close_quantity <= 0 or close_quantity >= pos.quantity:
+            logger.warning(
+                f"Partial close: gecersiz miktar {close_quantity:.6f} "
+                f"(pozisyon: {pos.quantity:.6f})"
+            )
+            return None
+
+        # Kapatilan kisim icin PnL hesapla
+        if pos.direction == "LONG":
+            gross_pnl = (exit_price - pos.entry_price) * close_quantity
+        else:
+            gross_pnl = (pos.entry_price - exit_price) * close_quantity
+
+        fee = exit_fee or (close_quantity * exit_price * self.commission)
+        net_pnl = gross_pnl - fee
+        net_pct = (net_pnl / (close_quantity * pos.entry_price)) * 100
+
+        trade = ClosedTrade(
+            position_id  = position_id,
+            symbol       = pos.symbol,
+            direction    = pos.direction,
+            entry_price  = pos.entry_price,
+            exit_price   = exit_price,
+            quantity     = close_quantity,
+            realized_pnl = round(net_pnl, 4),
+            realized_pct = round(net_pct, 4),
+            exit_reason  = exit_reason,
+            opened_at    = pos.opened_at,
+            closed_at    = datetime.now(timezone.utc),
+            strategy     = pos.strategy,
+            total_fee    = round(fee, 4),
+        )
+
+        # Sermayeyi geri al (kapatilan kisim kadar)
+        notional_closed = close_quantity * exit_price
+        self.capital += notional_closed - fee + gross_pnl
+
+        # Pozisyon miktarini dusur
+        pos.quantity -= close_quantity
+        pos.partial_closed   = True
+        pos.partial_quantity += close_quantity
+
+        self._history.append(trade)
+        sign = "+" if net_pnl >= 0 else ""
+        logger.info(
+            f"Partial close | {pos.direction} {close_quantity:.6f} {pos.symbol} "
+            f"@ ${exit_price:,.2f} | PnL: {sign}{net_pnl:.2f} USDT | "
+            f"Kalan: {pos.quantity:.6f} BTC | Sebep: {exit_reason}"
+        )
+        return trade
+
+    def check_trailing_stops(
+        self,
+        current_price: float,
+        breakeven_pct: float   = 0.015,
+        partial_close_pct: float = 0.030,
+        trail_sl_pct: float    = 0.015,
+        enabled: bool          = True,
+    ) -> list[tuple[str, str, dict]]:
+        """
+        Tum acik pozisyonlar icin trailing stop kontrol eder.
+
+        Kural:
+            1. Kar >= breakeven_pct (%1.5): SL -> entry (breakeven)
+            2. Kar >= partial_close_pct (%3): Pozisyonun yarisini kapat +
+               SL -> entry * (1 + trail_sl_pct) yani %1.5 karin uzerinde
+
+        Returns:
+            list of (position_id, action, data):
+                action = "BREAKEVEN"    -> SL entry'ye cekilmeli
+                action = "PARTIAL_CLOSE" -> Yarisi kapatilmali + SL guncellenmeli
+        """
+        if not enabled:
+            return []
+
+        actions = []
+        for pid, pos in self._positions.items():
+            if pos.current_price <= 0:
+                continue
+
+            # Anlık kar yüzdesi
+            if pos.direction == "LONG":
+                pnl_pct = (current_price - pos.entry_price) / pos.entry_price
+            else:
+                pnl_pct = (pos.entry_price - current_price) / pos.entry_price
+
+            # Adım 1: %3 karda partial close (henuz yapilmadiysa)
+            if pnl_pct >= partial_close_pct and not pos.partial_closed:
+                if pos.direction == "LONG":
+                    new_sl = round(pos.entry_price * (1 + trail_sl_pct), 2)
+                else:
+                    new_sl = round(pos.entry_price * (1 - trail_sl_pct), 2)
+                actions.append((pid, "PARTIAL_CLOSE", {
+                    "close_quantity": pos.quantity / 2,
+                    "new_sl"        : new_sl,
+                    "pnl_pct"       : round(pnl_pct * 100, 2),
+                }))
+                logger.info(
+                    f"Trailing: PARTIAL_CLOSE | {pos.direction} {pos.symbol} | "
+                    f"Kar: +{pnl_pct*100:.2f}% | Yari kapat, yeni SL: ${new_sl:,.2f}"
+                )
+
+            # Adım 2: %1.5 karda breakeven (partial close yapilmadiysa ve SL henuz entry'de degil)
+            elif (pnl_pct >= breakeven_pct and not pos.breakeven_triggered
+                  and not pos.partial_closed):
+                new_sl = pos.entry_price   # SL = entry (breakeven)
+                actions.append((pid, "BREAKEVEN", {
+                    "new_sl" : new_sl,
+                    "pnl_pct": round(pnl_pct * 100, 2),
+                }))
+                logger.info(
+                    f"Trailing: BREAKEVEN | {pos.direction} {pos.symbol} | "
+                    f"Kar: +{pnl_pct*100:.2f}% | SL entry'ye cekildi: ${new_sl:,.2f}"
+                )
+
+        return actions
+
+    def has_long_position(self, symbol: str | None = None) -> bool:
+        """Acik LONG pozisyon var mi?"""
+        for pos in self._positions.values():
+            if pos.direction == "LONG":
+                if symbol is None or pos.symbol == symbol:
+                    return True
+        return False
+
+    def has_short_position(self, symbol: str | None = None) -> bool:
+        """Acik SHORT pozisyon var mi?"""
+        for pos in self._positions.values():
+            if pos.direction == "SHORT":
+                if symbol is None or pos.symbol == symbol:
+                    return True
+        return False
 
     def close_all_positions(
         self, current_price: float, reason: str = "MANUAL"

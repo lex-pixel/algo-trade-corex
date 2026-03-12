@@ -159,30 +159,69 @@ Cloud-Algo/
 
 ---
 
-## PHASE 12 — Gelistirme Yol Haritasi (Siradaki)
+## PHASE 12 — Tamamlandi (2026-03-12)
 
-### 1. Pozisyon Gelistirmesi
-- Long ve Short ayni anda acilabilsin
-- Risk/kar oranini sembol/rejime gore dinamik ayarla
-- Binance Futures/Margin gerekecek
+**Test Sonucu:** 289/289 PASSED (32 yeni test eklendi)
 
-### 2. Strateji Gelistirmesi (PA Range odakli)
-- Volume confirmation: kirilimda hacim 1.5x ortalamanin ustunde olmali
-- RSI divergence: fiyat yeni dip/tepe yaparken RSI yapmiyorsa guclu sinyal
-- Retest girisi: kirilim sonrasi eski seviyeyi test edene kadar bekle
-- Fakeout filtresi: mum kapanis kirilimi teyit etmeli
-- PA modeli hakkinda kullanicidan daha fazla bilgi alinacak
+---
 
-### 3. Trailing Stop
-- %1.5 kara gecince SL entry'ye cek (breakeven)
-- %3 kara ulasinca anlik kar kitlenir, SL %1.5'e cekilir
-- Kalan pozisyon TP'ye kadar trailing ile tasinir
-- Partial close: pozisyonun yarisini kapat, yarisini tasI
+### PHASE 12A: Trailing Stop — TAMAMLANDI
+Dosyalar: trading/position_tracker.py, trading/main_loop.py, config/settings.yaml, config/loader.py
 
-### 4. ML Modeli Gelistirmesi
-- Coklu parite: ETH/USDT, BTC dominance, piyasa hacmi ek feature
-- Dis etkenler: funding rate, open interest, fear & greed index
-- Bu veriler feature engineering'e dahil edilecek
-- Engel yaratmayacak sekilde mevcut sinyal sistemine entegre
+Yapilan degisiklikler:
+- Position dataclass: breakeven_triggered, partial_closed, partial_quantity alanlari eklendi
+- partial_close_position(): pozisyonun istenen miktarini kapatir, kalan devam eder
+- check_trailing_stops(): tum acik pozisyonlar icin trailing stop kontrol eder
+  -> %1.5 karda: BREAKEVEN action (SL = entry)
+  -> %3 karda: PARTIAL_CLOSE action (yarisi kapatilir, SL = entry + %1.5)
+- main_loop._tick(): trailing stop check entegre edildi (2b adimi)
+- settings.yaml: trailing_stop bolumu eklendi (enabled, breakeven_pct, partial_close_pct, trail_sl_pct)
+- config/loader.py: TrailingStopConfig sinifi eklendi
 
-**Sira:** Trailing Stop -> Pozisyon -> Strateji (PA) -> ML
+### PHASE 12B: PA Range Gelistirmesi — TAMAMLANDI
+Dosyalar: strategies/pa_range_strategy.py, config/settings.yaml, config/loader.py
+
+Yapilan degisiklikler:
+- Volume Confirmation: hacim 1.5x 20-bar ortalama uzerinde olmali (volume_confirm_mult)
+  -> Hacim dusuksa sinyal uretilmez (fakeout riski)
+  -> Hacim OK ise confidence +0.08 bonus
+- Fakeout Filtresi: kapanisin destek/direnc bolgesinde olmasi kontrol edilir
+  -> Sadece golge dokunen mumlar engellenir
+  -> fakeout_filter=True ile settings.yaml'dan kontrol edilebilir
+- RSI Divergence: fiyat dip/zirve yaparken RSI yapmiyorsa +0.10 confidence bonus
+  -> Bullish: fiyat dip, RSI yukseliyor -> guclu AL sinyali
+  -> Bearish: fiyat zirve, RSI dusuyor -> guclu SAT sinyali
+  -> rsi_divergence=True ile ayarlanabilir
+
+### PHASE 12C: Short/Long Ayni Anda — TAMAMLANDI (paper mod)
+Dosyalar: trading/position_tracker.py, trading/main_loop.py, config/settings.yaml
+
+Yapilan degisiklikler:
+- has_long_position(symbol): acik LONG pozisyon var mi?
+- has_short_position(symbol): acik SHORT pozisyon var mi?
+- max_open_positions: 1 -> 2 (LONG + SHORT ayni anda)
+- main_loop: ayni yonde pozisyon varsa yeni pozisyon acilmaz
+  -> AL sinyali + zaten LONG var -> atla
+  -> SAT sinyali + zaten SHORT var -> atla
+  -> AL sinyali + SHORT var, LONG yok -> yeni LONG ac (her iki yon ayni anda calisiyor)
+NOT: Gercek SHORT icin Binance Futures/Margin gerekir (paper modda simule edilir)
+
+### PHASE 12D: ML External Data — TAMAMLANDI
+Dosyalar: ml/external_data.py (yeni), ml/feature_engineering.py
+
+Yapilan degisiklikler:
+- ml/external_data.py: ExternalDataFetcher sinifi
+  -> get_fear_greed(): alternative.me API, 0-100 (API anahtari gerektirmez)
+  -> get_btc_dominance(): CoinGecko /global, 0-100 yuzde
+  -> 1 saatlik onbellekleme (gereksiz API cagrisi yok)
+  -> Hata durumunda None doner, bot calismasini engellemez
+  -> get_external_fetcher(): singleton pattern
+- feature_engineering.py:
+  -> use_external_data parametresi eklendi (varsayilan: True)
+  -> _add_external_features(): fear_greed_norm, btc_dominance_norm eklendi (0-1)
+  -> fg_rsi_diverge: Fear & Greed ile RSI arasindaki fark (uyumsuzluk sinyali)
+
+## Gelecek Gelistirmeler
+- Binance Futures/Margin: gercek SHORT desteği
+- ETH/USDT coklu parite feature (feature_engineering'e eklenecek)
+- Open Interest ve Funding Rate (Binance Futures API)
