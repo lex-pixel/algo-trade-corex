@@ -225,3 +225,39 @@ Yapilan degisiklikler:
 - Binance Futures/Margin: gercek SHORT desteği
 - ETH/USDT coklu parite feature (feature_engineering'e eklenecek)
 - Open Interest ve Funding Rate (Binance Futures API)
+
+---
+
+## PLANLANAN GELISTIRMELER — 2026-03-12
+
+### 1. Telegram/Discord Bildirim Sistemi
+- Pozisyon acildi/kapandi bildirimi
+- KillSwitch tetiklendi alarmi
+- Gunluk PnL ozeti (otomatik)
+- TP/SL calistigi anlarda anlık mesaj
+- PC basinda olmadan bot takibi saglar
+
+### 2. Coklu Coin Destegi (ETH, SOL vb.)
+- Simdi sadece BTC/USDT, paralel olarak diger coinler de izlenecek
+- Her coin icin ayri sinyal + pozisyon yonetimi
+- Portfoy cesitlendirmesi
+- max_positions ve risk yonetimi yeniden duzenlenmeli
+
+### 3. Sinyal Kalitesi Iyilestirme
+- Ensemble model: XGBoost + LightGBM + RandomForest oylama
+- Dinamik guven esigi (simdi sabit 0.3)
+- Volatilite tabanli rejim tespiti (sadece trend degil)
+
+### 4. Raporlama / Performans Analizi
+- Gunluk/haftalik otomatik rapor (PDF veya metin)
+- Sharpe Ratio, Win Rate, Max Drawdown ozeti
+- Islem gecmisi analizi (saat dilimi bazli performans)
+
+### 5. Backtesting Gelistirme
+- Walk-forward backtest (simdi sadece basit backtest)
+- Komisyon + slippage daha gercekci modelleme
+- Farkli piyasa kosullarinda test (bull/bear/sideways)
+
+### NOT: PA Stratejisi Detayli Inceleme
+- Bir sonraki oturumda PA (Price Action Range) stratejisi detayli konusulacak
+- Mevcut parametreler, iyilestirme alanlari, alternatif yaklasimlar tartisılacak
