@@ -334,6 +334,7 @@ class TestMaybeRetrain:
         bot.cfg            = MagicMock()
         bot.cfg.general.symbol    = "BTC/USDT"
         bot.cfg.general.timeframe = "1h"
+        bot.cfg.mtf.retrain_every = 720   # cfg.mtf.retrain_every mock
         return bot
 
     def test_retrain_not_triggered_before_720(self):

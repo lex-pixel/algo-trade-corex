@@ -148,9 +148,6 @@ class PARangeStrategy(BaseStrategy):
         # Fiyat range içinde nerede? 0.0 = destek, 1.0 = direnç
         price_position = (price - support) / range_width
 
-        # Yakınlık eşiği: desteğe/dirence bu mesafe içindeyse "yakın" sayılır
-        proximity_abs = range_width * self.proximity_pct / 0.02  # range'e göre ölçekle
-
         near_support    = price <= support    + (range_width * self.proximity_pct)
         near_resistance = price >= resistance - (range_width * self.proximity_pct)
 

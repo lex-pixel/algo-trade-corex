@@ -50,6 +50,13 @@ data:
   cache_size: 500           # Redis'te kaç mum önbelleklensin
   parquet_dir: "data/raw"   # Ham veri kayıt klasörü
 
+# --- MTF (Multi-Timeframe) AYARLARI ---
+mtf:
+  penalty_pct: 0.30           # 4h kontra-trend: guven bu oranda dusurulur (0.30 = -%30)
+  entry_15m_overbought: 78    # 15m RSI bu degerin ustunde ise AL engellenir (gec kalindi)
+  entry_15m_oversold: 22      # 15m RSI bu degerin altinda ise SAT engellenir (gec kalindi)
+  retrain_every: 720          # Her kac tick'te bir ML modeli yeniden egitilir (~30 gun)
+
 # --- LOG ---
 logging:
   level: "INFO"             # DEBUG | INFO | WARNING | ERROR

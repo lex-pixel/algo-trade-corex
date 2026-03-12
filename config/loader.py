@@ -108,6 +108,13 @@ class RiskConfig(BaseModel):
     max_open_positions: int   = Field(default=1, ge=1, le=20)
 
 
+class MTFConfig(BaseModel):
+    penalty_pct:           float = Field(default=0.30, ge=0.0, le=1.0)
+    entry_15m_overbought:  float = Field(default=78.0, ge=50, le=100)
+    entry_15m_oversold:    float = Field(default=22.0, ge=0, le=50)
+    retrain_every:         int   = Field(default=720, ge=1)
+
+
 class DataConfig(BaseModel):
     history_days: int = Field(default=90, ge=1, le=3650)
     cache_size:   int = Field(default=500, ge=10, le=10000)
@@ -131,6 +138,7 @@ class AppConfig(BaseModel):
     general:    GeneralConfig    = Field(default_factory=GeneralConfig)
     strategies: StrategiesConfig = Field(default_factory=StrategiesConfig)
     risk:       RiskConfig       = Field(default_factory=RiskConfig)
+    mtf:        MTFConfig        = Field(default_factory=MTFConfig)
     data:       DataConfig       = Field(default_factory=DataConfig)
     logging:    LoggingConfig    = Field(default_factory=LoggingConfig)
 

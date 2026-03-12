@@ -86,7 +86,7 @@ def calc_position_size(
 
 # ── Sinyal Birlestirme ────────────────────────────────────────────────────────
 
-def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_15m=None):
+def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_15m=None, mtf_cfg=None):
     """
     RSI + PA Range + XGBoost sinyallerini cogunluk oyuyla birlestir.
 
@@ -176,30 +176,33 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_
         f"-> {action}({confidence:.2f})"
     )
 
-    # ── MTF Filtresi: 4h kontra-trend ise guveni %30 dusur (bloke etme) ─────────
-    # Eski davranis: tamamen bloke ederdi → hic islem yok
+    # ── MTF Filtresi: 4h kontra-trend ise guveni penalty_pct kadar dusur ───────
+    # Eski davranis: tamamen bloke ederdi -> hic islem yok
     # Yeni davranis: guveni azalt, RiskManager min_confidence ile filtrele
+    penalty = 1.0 - (mtf_cfg.penalty_pct if mtf_cfg else 0.30)
     if big_regime is not None and action != "BEKLE":
         if action == "AL" and big_regime == Regime.TREND_DOWN:
-            confidence = round(confidence * 0.70, 3)
+            confidence = round(confidence * penalty, 3)
             logger.info(
                 f"MTF filtre: 4h={big_regime.value} | AL kontra-trend, "
-                f"guven -%30 → {confidence:.2f}"
+                f"guven -%{(1-penalty)*100:.0f} -> {confidence:.2f}"
             )
         elif action == "SAT" and big_regime == Regime.TREND_UP:
-            confidence = round(confidence * 0.70, 3)
+            confidence = round(confidence * penalty, 3)
             logger.info(
                 f"MTF filtre: 4h={big_regime.value} | SAT kontra-trend, "
-                f"guven -%30 → {confidence:.2f}"
+                f"guven -%{(1-penalty)*100:.0f} -> {confidence:.2f}"
             )
         else:
             logger.info(
                 f"MTF filtre: 4h={big_regime.value} | {action} trend yonunde, tam guven"
             )
 
-    # ── 15m Giriş Zamanlaması: Aşırı Zonda Girme ────────────────────────────
-    # AL sinyali var ama 15m'de fiyat zaten cok yukseldi → girme (gec kaldin)
-    # SAT sinyali var ama 15m'de fiyat zaten cok dustu → girme (gec kaldin)
+    # ── 15m Giris Zamanlama: Asiri Zonda Girme ──────────────────────────────
+    # AL sinyali var ama 15m'de fiyat zaten cok yukseldi -> girme (gec kaldin)
+    # SAT sinyali var ama 15m'de fiyat zaten cok dustu -> girme (gec kaldin)
+    ob_15m = mtf_cfg.entry_15m_overbought if mtf_cfg else 78
+    os_15m = mtf_cfg.entry_15m_oversold   if mtf_cfg else 22
     if df_15m is not None and action != "BEKLE" and len(df_15m) >= 15:
         try:
             import pandas_ta as ta
@@ -207,16 +210,16 @@ def get_combined_signal(df, cfg, regime, ml_predictor=None, big_regime=None, df_
             rsi_15m_val = float(rsi_15m.iloc[-1]) if rsi_15m is not None else None
 
             if rsi_15m_val is not None:
-                if action == "AL" and rsi_15m_val > 78:
+                if action == "AL" and rsi_15m_val > ob_15m:
                     logger.info(
-                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} > 78 | "
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} > {ob_15m} | "
                         f"AL sinyali asiri alim, BEKLE"
                     )
                     action     = "BEKLE"
                     confidence = 0.0
-                elif action == "SAT" and rsi_15m_val < 22:
+                elif action == "SAT" and rsi_15m_val < os_15m:
                     logger.info(
-                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} < 22 | "
+                        f"15m giris filtresi: RSI={rsi_15m_val:.1f} < {os_15m} | "
                         f"SAT sinyali asiri satim, BEKLE"
                     )
                     action     = "BEKLE"
@@ -427,7 +430,8 @@ class TradingBot:
         # 3. Sinyal uret (RSI + PA + ML + 4h trend filtresi + 15m giris zamanlama)
         action, confidence, rsi_sig, pa_sig, ml_sig = get_combined_signal(
             df, self.cfg, regime, self.ml_predictor,
-            big_regime=big_regime, df_15m=df_15m
+            big_regime=big_regime, df_15m=df_15m,
+            mtf_cfg=self.cfg.mtf,
         )
 
         ml_part = (
@@ -705,19 +709,23 @@ class TradingBot:
 
     # ── Auto-Retrain ──────────────────────────────────────────────────────────
 
-    _RETRAIN_EVERY = 720   # 1h bot icin 720 tick = 30 gun
+    _RETRAIN_EVERY = 720   # varsayilan (cfg.mtf.retrain_every yoksa kullanilir)
 
     def _maybe_retrain(self) -> None:
         """
-        Her 720 tick'te bir (yaklasik 30 gun) ML modelini arka planda yeniden egitir.
+        Her cfg.mtf.retrain_every tick'te bir ML modelini arka planda yeniden egitir.
         Bot calismasini engellemez — ayri thread icinde calisir.
         """
+        retrain_every = self.cfg.mtf.retrain_every
         ticks_since = self._iteration - self._last_retrain
-        if ticks_since < self._RETRAIN_EVERY:
+        if ticks_since < retrain_every:
             return
 
         self._last_retrain = self._iteration
-        logger.info(f"Auto-retrain tetiklendi (Tick #{self._iteration}, ~30 gun gecti)")
+        logger.info(
+            f"Auto-retrain tetiklendi (Tick #{self._iteration}, "
+            f"~{retrain_every} tick = ~{retrain_every//24} gun gecti)"
+        )
 
         import threading
         def _retrain_worker():
