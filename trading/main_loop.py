@@ -749,18 +749,48 @@ class TradingBot:
             # Equity gecmisini geri yukle
             self._equity_history = state.get("equity_history", [])
 
+            # Acik pozisyonlari geri yukle
+            # (restore edilmezse capital dusuk + 0 pozisyon = yanlis drawdown)
+            from trading.position_tracker import Position
+            for p in state.get("open_positions", []):
+                pos = Position(
+                    position_id    = p["position_id"],
+                    symbol         = p["symbol"],
+                    direction      = p["direction"],
+                    entry_price    = p["entry_price"],
+                    quantity       = p["quantity"],
+                    stop_loss      = p.get("stop_loss"),
+                    take_profit    = p.get("take_profit"),
+                    strategy       = p.get("strategy", "unknown"),
+                    opened_at      = datetime.fromisoformat(p["opened_at"]),
+                    entry_fee      = p.get("entry_fee", 0.0),
+                    breakeven_triggered = p.get("breakeven_triggered", False),
+                    partial_closed      = p.get("partial_closed", False),
+                    partial_quantity    = p.get("partial_quantity", 0.0),
+                )
+                pt._positions[pos.position_id] = pos
+
             # KillSwitch gun-baslangic sermayesini guncelle
-            # (yoksa yuklenen sermaye ile initial_capital arasindaki fark
-            #  yanlis gunluk zarar olarak algilanir)
-            self.risk_manager.update_day_start(pt.capital)
+            # Acik pozisyonlarin notional degerini ekleyerek gercek equity kullan
+            open_notional = sum(
+                p.quantity * p.entry_price for p in pt._positions.values()
+            )
+            real_equity = pt.capital + open_notional
+            self.risk_manager.update_day_start(real_equity)
+            # equity_peak'i de gercek equity ile guncelle (sahte drawdown onlenir)
+            self.risk_manager.kill_switch._equity_peak = max(
+                self.risk_manager.kill_switch._equity_peak, real_equity
+            )
 
             saved_at = state.get("saved_at", "?")
-            n_trades = len(state.get("trades", []))
+            n_trades  = len(state.get("trades", []))
+            n_open    = len(pt._positions)
             logger.info(
                 f"Onceki oturum yuklendi | "
                 f"Kaydedilme: {saved_at[:16]} | "
                 f"Sermaye: ${pt.capital:,.2f} | "
-                f"{n_trades} kapanmis islem"
+                f"{n_trades} kapanmis islem | "
+                f"{n_open} acik pozisyon"
             )
             return True
 
