@@ -33,6 +33,8 @@ logger = get_logger(__name__)
 
 MODEL_PATH     = Path(__file__).parent / "models" / "xgb_btc_1h.json"
 MODEL_PATH_NEW = Path(__file__).parent / "models" / "xgb_btc_1h_new.json"
+META_PATH      = Path(__file__).parent / "models" / "xgb_btc_1h_meta.json"
+META_PATH_NEW  = Path(__file__).parent / "models" / "xgb_btc_1h_new_meta.json"
 MIN_ACCURACY   = 0.35   # Bu esik altinda model degistirilmez
 
 
@@ -148,9 +150,11 @@ def retrain(days: int = 365, quiet: bool = False) -> bool:
         MODEL_PATH_NEW.parent.mkdir(parents=True, exist_ok=True)
         predictor.save(MODEL_PATH_NEW)
 
-        # Atomik yer degistir
+        # Atomik yer degistir (model + meta birlikte tasinmali)
         import shutil
         shutil.move(str(MODEL_PATH_NEW), str(MODEL_PATH))
+        if META_PATH_NEW.exists():
+            shutil.move(str(META_PATH_NEW), str(META_PATH))
 
         logger.info(f"Model guncellendi: {MODEL_PATH}")
         if not quiet:
