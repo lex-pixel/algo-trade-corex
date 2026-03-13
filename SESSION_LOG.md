@@ -224,7 +224,30 @@ Yapilan degisiklikler:
 ## Gelecek Gelistirmeler
 - Binance Futures/Margin: gercek SHORT desteği
 - ETH/USDT coklu parite feature (feature_engineering'e eklenecek)
-- Open Interest ve Funding Rate (Binance Futures API)
+
+## TAMAMLANAN GELISTIRMELER — 2026-03-13
+
+### Phase 13 — PA Gelistirmeleri (PA-1'den PA-10'a)
+Dosya: `strategies/pa_range_strategy.py`
+| # | Özellik | Tip |
+|---|---------|-----|
+| PA-1 | EQ Seviyesi + S/R Flip | Confidence ±0.10 |
+| PA-2 | Deviasyon Tespiti | Confidence +0.15 |
+| PA-3 | Order Block | Confidence +0.12 |
+| PA-4 | Market Yapısı (CHoCH/BOS) | Filtre |
+| PA-5 | OTE Fibonacci 0.618-0.786 | Confidence +0.15 |
+| PA-6 | Imbalance/GAP | TP hedefi değiştirir |
+| PA-7 | Likidite Tabanlı TP | TP hedefi değiştirir |
+| PA-8 | Key Levels (Daily/Weekly) | Confidence +0.10 |
+| PA-9 | Power of 3 (AMD) | Filtre + +0.08 |
+| PA-10 | SFP (Swing Failure Pattern) | Confidence +0.13 |
+
+### Phase 14 — Veri Katmanı
+- **VWAP**: `pa_range_strategy.py` — fiyat VWAP altı AL +0.10, üstü SAT +0.10
+- **Funding Rate**: `external_data.py` + `feature_engineering.py` — `funding_rate_norm` ML özelliği
+- **Open Interest**: `external_data.py` + `feature_engineering.py` — `oi_norm` ML özelliği
+- fetch_all() artık 4 kaynak döndürüyor: F&G + BTC Dom + Funding Rate + OI
+- ML modeli 53 özellik (bir sonraki auto-retrainde 53-feature model eğitilecek)
 
 ---
 
