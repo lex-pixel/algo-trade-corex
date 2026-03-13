@@ -96,6 +96,7 @@ class PARangeStrategy(BaseStrategy):
         self.ob_lookback    = 10     # Order Block tespiti için kaç muma bakılır
         self.ms_swing_n     = 5      # Market yapısı: swing high/low tespiti için kaç mum her yanda
         self.ote_bonus      = 0.15   # OTE Fibonacci bölgesi bonusu
+        self.imbalance_bars = 30     # Imbalance tespiti için kaç muma bakılır
 
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
@@ -297,11 +298,15 @@ class PARangeStrategy(BaseStrategy):
             # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
             confidence = min(1.0, confidence + ote_al_bonus)
 
+            # PA-6: Imbalance/GAP → TP hedefi (yoksa klasik hesap)
+            imb_tp = self._find_imbalance_tp(df, price, direction="AL")
+            al_tp  = imb_tp if imb_tp else price + (range_width * 0.5)
+
             signal = Signal(
                 action="AL",
                 confidence=round(confidence, 3),
                 stop_loss=support * (1 - self.stop_pct),
-                take_profit=price + (range_width * 0.5),
+                take_profit=al_tp,
                 reason=(
                     f"Destege yakin: {price:,.0f} ~ {support:,.0f} | "
                     f"RSI: {rsi:.1f} < {self.rsi_oversold} | "
@@ -351,11 +356,15 @@ class PARangeStrategy(BaseStrategy):
             # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
             confidence = min(1.0, confidence + ote_sat_bonus)
 
+            # PA-6: Imbalance/GAP → TP hedefi (yoksa klasik hesap)
+            imb_tp  = self._find_imbalance_tp(df, price, direction="SAT")
+            sat_tp  = imb_tp if imb_tp else price - (range_width * 0.5)
+
             signal = Signal(
                 action="SAT",
                 confidence=round(confidence, 3),
                 stop_loss=resistance * (1 + self.stop_pct),
-                take_profit=price - (range_width * 0.5),
+                take_profit=sat_tp,
                 reason=(
                     f"Direnca yakin: {price:,.0f} ~ {resistance:,.0f} | "
                     f"RSI: {rsi:.1f} > {self.rsi_overbought} | "
@@ -380,6 +389,83 @@ class PARangeStrategy(BaseStrategy):
             )
 
     # ── Yardımcı Metodlar ────────────────────────────────────────────────────
+
+    # ── PA-6: Imbalance / GAP Tespiti — TP Hedefi ───────────────────────────────
+
+    def _find_imbalance_tp(
+        self, df: pd.DataFrame, price: float, direction: str
+    ) -> float | None:
+        """
+        PA-6: Imbalance (dengesizlik bölgesi) tespiti ve TP hedefi.
+
+        Imbalance: Hızlı hareketle oluşan boşluk.
+            - Mum[i-1] high ile Mum[i+1] low arasında gap varsa → Bullish Imbalance
+            - Mum[i-1] low  ile Mum[i+1] high arasında gap varsa → Bearish Imbalance
+
+        Kural:
+            - AL pozisyonu için: fiyatın ÜSTÜNDEKI en yakın bearish imbalance = TP hedefi
+            - SAT pozisyonu için: fiyatın ALTINDAKİ en yakın bullish imbalance = TP hedefi
+            - İmbalance doldurulmuşsa (fiyat oradan geçtiyse) görmezden gel
+
+        Returns:
+            TP hedefi fiyatı veya None (imbalance bulunamazsa)
+        """
+        n = self.imbalance_bars
+        if len(df) < n + 2:
+            return None
+
+        window = df.iloc[-(n + 2):-1]  # Son N+2 mum, son mum hariç
+        candidates = []
+
+        for i in range(1, len(window) - 1):
+            prev = window.iloc[i - 1]
+            curr = window.iloc[i]
+            nxt  = window.iloc[i + 1]
+
+            prev_high = float(prev["high"])
+            prev_low  = float(prev["low"])
+            nxt_high  = float(nxt["high"])
+            nxt_low   = float(nxt["low"])
+
+            # Bullish Imbalance: prev_low > nxt_high (yukarı boşluk)
+            # Ortası = boşluğun orta noktası
+            if prev_low > nxt_high:
+                mid = (prev_low + nxt_high) / 2
+                candidates.append(("bullish", mid, prev_low, nxt_high))
+
+            # Bearish Imbalance: prev_high < nxt_low (aşağı boşluk)
+            if prev_high < nxt_low:
+                mid = (prev_high + nxt_low) / 2
+                candidates.append(("bearish", mid, prev_high, nxt_low))
+
+        if not candidates:
+            return None
+
+        if direction == "AL":
+            # Fiyatın üstündeki en yakın bearish imbalance (fiyatın gideceği yer)
+            above = [(t, mid, lo, hi) for t, mid, lo, hi in candidates
+                     if t == "bearish" and mid > price]
+            if above:
+                closest = min(above, key=lambda x: x[1] - price)
+                logger.debug(
+                    f"PA-6 Bearish imbalance TP: {closest[1]:,.0f} "
+                    f"(zone={closest[2]:,.0f}-{closest[3]:,.0f})"
+                )
+                return closest[1]
+
+        elif direction == "SAT":
+            # Fiyatın altındaki en yakın bullish imbalance
+            below = [(t, mid, lo, hi) for t, mid, lo, hi in candidates
+                     if t == "bullish" and mid < price]
+            if below:
+                closest = max(below, key=lambda x: x[1])
+                logger.debug(
+                    f"PA-6 Bullish imbalance TP: {closest[1]:,.0f} "
+                    f"(zone={closest[2]:,.0f}-{closest[3]:,.0f})"
+                )
+                return closest[1]
+
+        return None
 
     # ── PA-5: OTE (Optimal Trade Entry) — Fibonacci 0.618 / 0.705 / 0.786 ─────
 
