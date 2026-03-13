@@ -89,6 +89,12 @@ class PARangeStrategy(BaseStrategy):
         self.fakeout_filter       = fakeout_filter
         self.rsi_divergence       = rsi_divergence
 
+        # PA-1/2/3 parametreleri
+        self.eq_bonus       = 0.10   # EQ bölgesi confidence bonusu
+        self.dev_bonus      = 0.15   # Deviasyon confirmation bonusu
+        self.ob_bonus       = 0.12   # Order Block bonusu
+        self.ob_lookback    = 10     # Order Block tespiti için kaç muma bakılır
+
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
         logger.info(
@@ -196,6 +202,22 @@ class PARangeStrategy(BaseStrategy):
             prox_range = range_width * self.proximity_pct
             return last_close >= resistance - prox_range
 
+        # ── Adım 6b: PA-1 EQ (Equilibrium) Seviyesi Bonusu ──────────────
+        # Range ortasi = EQ = (support + resistance) / 2
+        # Fiyat EQ altinda = ucuz bolge → AL bonusu
+        # Fiyat EQ ustunde = pahali bolge → SAT bonusu
+        eq_al_bonus  = self.eq_bonus if price_position < 0.5 else 0.0
+        eq_sat_bonus = self.eq_bonus if price_position > 0.5 else 0.0
+
+        # ── Adım 6c: PA-2 Deviasyon Tespiti ──────────────────────────────
+        # Son mumun high/low range disina cikip kapanisi icerde mi?
+        dev_al_bonus, dev_sat_bonus = self._detect_deviation(df, support, resistance)
+
+        # ── Adım 6d: PA-3 Order Block Tespiti ────────────────────────────
+        ob_al_bonus, ob_sat_bonus = self._find_order_block(
+            df, support, resistance, range_width
+        )
+
         # ── Adım 7: RSI Divergence Bonus ──────────────────────────────────
         # Bullish divergence: fiyat yeni dip yaparken RSI yapmiyorsa — AL güclendirir
         # Bearish divergence: fiyat yeni zirve yaparken RSI yapmiyorsa — SAT güçlendirir
@@ -249,6 +271,12 @@ class PARangeStrategy(BaseStrategy):
                 confidence = min(1.0, confidence + 0.08)
             # RSI divergence bonusu
             confidence = min(1.0, confidence + divergence_bonus)
+            # PA-1 EQ bonusu (ucuz bolge)
+            confidence = min(1.0, confidence + eq_al_bonus)
+            # PA-2 Deviasyon bonusu (sahte kirilim geri donusu)
+            confidence = min(1.0, confidence + dev_al_bonus)
+            # PA-3 Order Block bonusu (kurumsal alim bolgesi)
+            confidence = min(1.0, confidence + ob_al_bonus)
 
             signal = Signal(
                 action="AL",
@@ -290,6 +318,12 @@ class PARangeStrategy(BaseStrategy):
                 confidence = min(1.0, confidence + 0.08)
             # RSI divergence bonusu
             confidence = min(1.0, confidence + divergence_bonus)
+            # PA-1 EQ bonusu (pahali bolge)
+            confidence = min(1.0, confidence + eq_sat_bonus)
+            # PA-2 Deviasyon bonusu (sahte kirilim geri donusu)
+            confidence = min(1.0, confidence + dev_sat_bonus)
+            # PA-3 Order Block bonusu (kurumsal satis bolgesi)
+            confidence = min(1.0, confidence + ob_sat_bonus)
 
             signal = Signal(
                 action="SAT",
@@ -320,6 +354,134 @@ class PARangeStrategy(BaseStrategy):
             )
 
     # ── Yardımcı Metodlar ────────────────────────────────────────────────────
+
+    # ── PA-2: Deviasyon Tespiti ───────────────────────────────────────────────
+
+    def _detect_deviation(
+        self, df: pd.DataFrame, support: float, resistance: float
+    ) -> tuple[float, float]:
+        """
+        PA-2: Deviasyon (sahte kirilim) tespiti.
+
+        Bullish deviasyon: Son mumun low < support AMA close >= support
+            → Fiyat desteği kırdı görüntüsü verdi, ama kapandı içeride
+            → Güçlü AL sinyali (+dev_bonus)
+
+        Bearish deviasyon: Son mumun high > resistance AMA close <= resistance
+            → Fiyat direnci kırdı görüntüsü verdi, ama kapandı içeride
+            → Güçlü SAT sinyali (+dev_bonus)
+
+        Returns:
+            (al_bonus, sat_bonus): float tuple
+        """
+        if len(df) < 2:
+            return 0.0, 0.0
+
+        last = df.iloc[-1]
+        al_bonus  = 0.0
+        sat_bonus = 0.0
+
+        # Bullish deviasyon: low support altina indi, close support uzerinde kapandi
+        if float(last["low"]) < support and float(last["close"]) >= support:
+            al_bonus = self.dev_bonus
+            logger.debug(
+                f"PA-2 Bullish deviasyon: low={last['low']:,.0f} < support={support:,.0f}, "
+                f"close={last['close']:,.0f} >= support | AL bonus: +{al_bonus}"
+            )
+
+        # Bearish deviasyon: high resistance ustune cikti, close resistance altinda kapandi
+        if float(last["high"]) > resistance and float(last["close"]) <= resistance:
+            sat_bonus = self.dev_bonus
+            logger.debug(
+                f"PA-2 Bearish deviasyon: high={last['high']:,.0f} > resistance={resistance:,.0f}, "
+                f"close={last['close']:,.0f} <= resistance | SAT bonus: +{sat_bonus}"
+            )
+
+        return al_bonus, sat_bonus
+
+    # ── PA-3: Order Block Tespiti ─────────────────────────────────────────────
+
+    def _find_order_block(
+        self,
+        df: pd.DataFrame,
+        support: float,
+        resistance: float,
+        range_width: float,
+    ) -> tuple[float, float]:
+        """
+        PA-3: Order Block (OB) tespiti.
+
+        Bullish OB: Kırmızı mum ardından büyük yeşil mum (önceki düşüşü kapatan)
+            + OB destek bölgesinde (support yakını) ise → AL bonusu
+        Bearish OB: Yeşil mum ardından büyük kırmızı mum
+            + OB direnç bölgesinde (resistance yakını) ise → SAT bonusu
+
+        "Büyük" tanımı: Gövdesi ortalama gövdenin 1.5 katı üzerinde
+
+        Returns:
+            (al_bonus, sat_bonus): float tuple
+        """
+        n = self.ob_lookback
+        if len(df) < n + 2:
+            return 0.0, 0.0
+
+        window = df.iloc[-(n + 1):-1]  # Son N mum (son mumu dahil etme)
+        prox   = range_width * self.proximity_pct
+
+        # Ortalama mum gövdesi (bias onleme: son mum dahil edilmiyor)
+        bodies = abs(window["close"] - window["open"])
+        avg_body = float(bodies.mean()) if len(bodies) > 0 else 1.0
+
+        al_bonus  = 0.0
+        sat_bonus = 0.0
+
+        for i in range(len(window) - 1):
+            prev = window.iloc[i]
+            curr = window.iloc[i + 1]
+
+            prev_bearish = float(prev["close"]) < float(prev["open"])  # Kırmızı mum
+            curr_bullish = float(curr["close"]) > float(curr["open"])  # Yeşil mum
+            curr_body    = abs(float(curr["close"]) - float(curr["open"]))
+
+            # Bullish OB: kirmizi → buyuk yesil
+            if (
+                prev_bearish
+                and curr_bullish
+                and curr_body >= avg_body * 1.5
+                and float(curr["close"]) >= float(prev["open"])  # onceki dususu kapatiyor
+            ):
+                # OB destek bolgesinde mi?
+                ob_level = float(prev["low"])  # OB seviyesi = kirmizi mumun dibi
+                if ob_level <= support + prox:
+                    al_bonus = self.ob_bonus
+                    logger.debug(
+                        f"PA-3 Bullish OB tespit edildi: ob_level={ob_level:,.0f} "
+                        f"destek={support:,.0f} | AL bonus: +{al_bonus}"
+                    )
+                    break
+
+            prev_bullish = float(prev["close"]) > float(prev["open"])  # Yeşil mum
+            curr_bearish = float(curr["close"]) < float(curr["open"])  # Kırmızı mum
+            curr_body2   = abs(float(curr["close"]) - float(curr["open"]))
+
+            # Bearish OB: yesil → buyuk kirmizi
+            if (
+                prev_bullish
+                and curr_bearish
+                and curr_body2 >= avg_body * 1.5
+                and float(curr["close"]) <= float(prev["open"])  # onceki yukselisi kapatiyor
+            ):
+                # OB direnc bolgesinde mi?
+                ob_level = float(prev["high"])  # OB seviyesi = yesil mumun tepesi
+                if ob_level >= resistance - prox:
+                    sat_bonus = self.ob_bonus
+                    logger.debug(
+                        f"PA-3 Bearish OB tespit edildi: ob_level={ob_level:,.0f} "
+                        f"direnc={resistance:,.0f} | SAT bonus: +{sat_bonus}"
+                    )
+                    break
+
+        return al_bonus, sat_bonus
 
     def _calc_confidence_al(
         self, price: float, support: float, resistance: float, rsi: float
