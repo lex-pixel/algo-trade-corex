@@ -286,6 +286,20 @@ Dosyalar: `backtesting/engine.py`, `backtesting/walk_forward.py` (yeni)
 - **Engine: Hacim bazli slipaj** — yuksek hacimde daha az kayma (slippage_volume_adj=True)
 - SHORT PnL: (entry - exit) * size formulu
 
+### Phase 22 — TradingView Benzeri Canli Grafik — TAMAMLANDI
+Dosyalar: `scripts/live_chart.py` (yeni)
+- **Mum Grafigi**: Binance Testnet OHLCV, Plotly dark theme (#131722)
+- **Islem Isaretleri**: Giris ucgen (AL/SAT), cikis X ile isaret, PnL yazisi
+- **Acik Pozisyon Cizgileri**: SL (kirmizi), TP (yesil), Giris (sari) yatay cizgi
+- **Risk/Reward Shading**: SL bolgesi kirmizi, TP bolgesi yesil transparan
+- **RSI Alt Paneli**: 30/50/70 seviye cizgileri, asiri al/sat etiketleri
+- **Hacim Paneli**: Yukselis/dusus renkli bar
+- **30sn Auto-Refresh**: meta http-equiv refresh
+- **UTC+3 Timestamp + Ozet Kutu**: Kapital, PnL, WR, iterasyon
+- 13 yeni test -> Toplam 352/352 PASSED
+- Commit: 6c34687
+- Kullanim: `python scripts/live_chart.py --open`
+
 ---
 
 ## PLANLANAN GELISTIRMELER — 2026-03-12
