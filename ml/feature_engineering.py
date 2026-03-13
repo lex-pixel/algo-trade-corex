@@ -345,6 +345,8 @@ class FeatureEngineer:
 
         fear_greed    = 50.0   # varsayilan: notral
         btc_dominance = 50.0   # varsayilan: notral
+        funding_rate  = 0.0    # varsayilan: sifir (dengeli)
+        open_interest = 0.0    # varsayilan: sifir (bilinmiyor)
 
         if self._ext_fetcher is not None:
             try:
@@ -353,12 +355,27 @@ class FeatureEngineer:
                     fear_greed = float(ext["fear_greed"])
                 if ext.get("btc_dominance") is not None:
                     btc_dominance = float(ext["btc_dominance"])
+                if ext.get("funding_rate") is not None:
+                    funding_rate = float(ext["funding_rate"])
+                if ext.get("open_interest") is not None:
+                    open_interest = float(ext["open_interest"])
             except Exception as e:
                 logger.debug(f"External feature alinamadi, varsayilan kullaniliyor: {e}")
 
         # Tum satirlara ayni degeri yaz (taze anlık veri — makul bir yaklasim)
-        feat["fear_greed_norm"]    = fear_greed / 100.0     # 0-1 normalizasyon
-        feat["btc_dominance_norm"] = btc_dominance / 100.0  # 0-1 normalizasyon
+        feat["fear_greed_norm"]    = fear_greed / 100.0      # 0-1 normalizasyon
+        feat["btc_dominance_norm"] = btc_dominance / 100.0   # 0-1 normalizasyon
+
+        # Funding Rate normalizasyon: [-0.003, +0.003] → [-1, +1] arasi klip
+        # 0 = dengeli, +1 = asiri long, -1 = asiri short
+        feat["funding_rate_norm"]  = float(np.clip(funding_rate / 0.003, -1.0, 1.0))
+
+        # Open Interest normalizasyon: USD degerini milyar'a bolup log scale
+        # 0 = bilinmiyor, 1+ = yuksek OI (normalize: 10B USD ~ 1.0)
+        if open_interest > 0:
+            feat["oi_norm"] = float(np.clip(open_interest / 1e10, 0.0, 2.0))
+        else:
+            feat["oi_norm"] = 0.5  # varsayilan: orta deger
 
         # RSI uyumsuzlugu ozelligi: Fear & Greed ile RSI arasindaki fark
         # (RSI yuksek ama korku varsa: uyumsuzluk sinyali)
@@ -367,7 +384,8 @@ class FeatureEngineer:
 
         logger.debug(
             f"External features eklendi | "
-            f"F&G: {fear_greed:.0f} | BTC Dom: {btc_dominance:.1f}%"
+            f"F&G: {fear_greed:.0f} | BTC Dom: {btc_dominance:.1f}% | "
+            f"Funding: {funding_rate:.6f} | OI: ${open_interest/1e9:.1f}B"
         )
         return feat
 

@@ -101,6 +101,7 @@ class PARangeStrategy(BaseStrategy):
         self.key_bonus      = 0.10   # Key level yakınlık bonusu
         self.amd_bars       = 24     # Power of 3 AMD analizi için kaç mum (24h = 1 gün)
         self.sfp_bonus      = 0.13   # SFP (Swing Failure Pattern) bonusu
+        self.vwap_bonus     = 0.10   # VWAP tarafı doğrulama bonusu
 
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
@@ -247,6 +248,11 @@ class PARangeStrategy(BaseStrategy):
         # Swing kırıldı ama kapanış içeride → güçlü ters sinyal
         sfp_al_bonus, sfp_sat_bonus = self._detect_sfp(df, support, resistance)
 
+        # ── Adım 6j: VWAP Filtresi ────────────────────────────────────────
+        # Fiyat VWAP altında → kurumsal ucuz bölge → AL bonusu
+        # Fiyat VWAP üstünde → kurumsal pahalı bölge → SAT bonusu
+        vwap_al_bonus, vwap_sat_bonus = self._calc_vwap_bias(df, price)
+
         # ── Adım 7: RSI Divergence Bonus ──────────────────────────────────
         # Bullish divergence: fiyat yeni dip yaparken RSI yapmiyorsa — AL güclendirir
         # Bearish divergence: fiyat yeni zirve yaparken RSI yapmiyorsa — SAT güçlendirir
@@ -323,6 +329,8 @@ class PARangeStrategy(BaseStrategy):
                 confidence = min(1.0, confidence + 0.08)
             # PA-10 SFP bonusu (swing failure pattern)
             confidence = min(1.0, confidence + sfp_al_bonus)
+            # VWAP bonusu (kurumsal ucuz bolge teyidi)
+            confidence = min(1.0, confidence + vwap_al_bonus)
 
             # PA-6/7: TP hedefi — Imbalance > Likidite > Klasik (öncelik sırası)
             imb_tp = self._find_imbalance_tp(df, price, direction="AL")
@@ -392,6 +400,8 @@ class PARangeStrategy(BaseStrategy):
                 confidence = min(1.0, confidence + 0.08)
             # PA-10 SFP bonusu (swing failure pattern)
             confidence = min(1.0, confidence + sfp_sat_bonus)
+            # VWAP bonusu (kurumsal pahali bolge teyidi)
+            confidence = min(1.0, confidence + vwap_sat_bonus)
 
             # PA-6/7: TP hedefi — Imbalance > Likidite > Klasik (öncelik sırası)
             imb_tp  = self._find_imbalance_tp(df, price, direction="SAT")
@@ -427,6 +437,77 @@ class PARangeStrategy(BaseStrategy):
             )
 
     # ── Yardımcı Metodlar ────────────────────────────────────────────────────
+
+    # ── VWAP (Volume Weighted Average Price) ─────────────────────────────────────
+
+    def _calc_vwap_bias(
+        self, df: pd.DataFrame, price: float
+    ) -> tuple[float, float]:
+        """
+        VWAP (Hacim Ağırlıklı Ortalama Fiyat) tabanlı yön teyidi.
+
+        VWAP = Σ(typical_price × volume) / Σ(volume)
+        typical_price = (high + low + close) / 3
+
+        Hesaplama: Günün başından itibaren kümülatif (intraday VWAP).
+        Eğer günlük veri yoksa, son lookback mumlardan hesaplanır.
+
+        Kurumsal anlamı:
+            Fiyat > VWAP → Kurumlar o gün ortalama maliyetin üstünden satıyor olabilir
+                           → SAT sinyali daha anlamlı
+            Fiyat < VWAP → Kurumlar ortalama maliyetin altından alıyor
+                           → AL sinyali daha anlamlı
+            VWAP yakını  → Destek/Direnç gibi davranır
+
+        Returns:
+            (al_bonus, sat_bonus): float tuple
+        """
+        if len(df) < 5:
+            return 0.0, 0.0
+
+        try:
+            # Günün başından itibaren VWAP hesapla
+            today = df.index[-1].date() if hasattr(df.index, 'date') else None
+            if today is not None:
+                day_df = df[df.index.date == today]
+                if len(day_df) >= 2:
+                    calc_df = day_df
+                else:
+                    calc_df = df.iloc[-24:]  # Fallback: son 24 mum
+            else:
+                calc_df = df.iloc[-24:]
+
+            typical_price = (calc_df["high"] + calc_df["low"] + calc_df["close"]) / 3
+            cum_tp_vol    = (typical_price * calc_df["volume"]).cumsum()
+            cum_vol       = calc_df["volume"].cumsum()
+            vwap          = float((cum_tp_vol / cum_vol).iloc[-1])
+
+            # VWAP ile fiyat farkı
+            vwap_diff_pct = (price - vwap) / vwap
+
+            al_bonus  = 0.0
+            sat_bonus = 0.0
+
+            # Fiyat VWAP altında (%0.1 den fazla) → AL daha anlamlı
+            if vwap_diff_pct < -0.001:
+                al_bonus = self.vwap_bonus
+                logger.debug(
+                    f"VWAP AL bonus: fiyat={price:,.0f} < VWAP={vwap:,.0f} "
+                    f"(%{vwap_diff_pct*100:.2f}) | +{al_bonus}"
+                )
+            # Fiyat VWAP üstünde (%0.1 den fazla) → SAT daha anlamlı
+            elif vwap_diff_pct > 0.001:
+                sat_bonus = self.vwap_bonus
+                logger.debug(
+                    f"VWAP SAT bonus: fiyat={price:,.0f} > VWAP={vwap:,.0f} "
+                    f"(%{vwap_diff_pct*100:.2f}) | +{sat_bonus}"
+                )
+
+            return al_bonus, sat_bonus
+
+        except Exception as e:
+            logger.debug(f"VWAP hesaplanamadi: {e}")
+            return 0.0, 0.0
 
     # ── PA-7: Likidite Tabanlı TP Hedefi ─────────────────────────────────────────
 
