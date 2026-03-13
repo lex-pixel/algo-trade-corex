@@ -251,6 +251,43 @@ Dosya: `strategies/pa_range_strategy.py`
 
 ---
 
+## TAMAMLANAN GELISTIRMELER — 2026-03-13 (2. oturum)
+
+**Test Sonucu:** 339/339 PASSED (+50 yeni test)  |  commit: 1641fdc
+
+### Phase 17 — Otomatik Raporlama — TAMAMLANDI
+Dosya: `scripts/report.py`
+- Sharpe, Sortino, Calmar, Profit Factor, Expectancy, Win Rate hesaplar
+- A/B/C/D not sistemi (4 metrik kombinasyonu)
+- TXT + JSON otomatik rapor -> `reports/report_TARIH.txt`
+- `python scripts/report.py` ile calistirilir
+
+### Phase 18 — Dashboard Yenileme — TAMAMLANDI
+Dosya: `scripts/dashboard.py`
+- UTC+3 timestamp (Turkiye saati) tum grafik ve tablolarda
+- Sharpe + Profit Factor ozet tabloya eklendi
+- 4. panel: acik pozisyonlar tablosu (yesil=LONG, kirmizi=SHORT)
+- 60 saniyede bir auto-refresh (HTML meta tag)
+- Dashboard yuksekligi 1000 -> 1250
+
+### Phase 19 — R:R Modulu — TAMAMLANDI
+Dosya: `scripts/rr_calc.py`
+- LONG/SHORT R:R hesaplama, lot/miktar hesabi
+- Kaskade TP destegi (TP1/TP2/TP3 farkli agirliklar: %50/%30/%20)
+- Interaktif mod + CLI mod (`--entry --sl --tp --capital --risk`)
+- Plotly HTML gorsel (risk/reward bolgeler, kaskade PnL bar)
+- `python scripts/rr_calc.py --entry 70000 --sl 68000 --tp 76000 --capital 10000`
+
+### Phase 21 — Backtesting Gelistirme — TAMAMLANDI
+Dosyalar: `backtesting/engine.py`, `backtesting/walk_forward.py` (yeni)
+- **Walk-Forward**: rolling + expanding window, bilesik getiri, donem ozeti
+- **Engine: SHORT destegi** — SAT sinyaline SHORT pozisyon (allow_short=True)
+- **Engine: BNB komisyon** — commission_bnb=True ile %0.075 (standart %0.1'in %25 alti)
+- **Engine: Hacim bazli slipaj** — yuksek hacimde daha az kayma (slippage_volume_adj=True)
+- SHORT PnL: (entry - exit) * size formulu
+
+---
+
 ## PLANLANAN GELISTIRMELER — 2026-03-12
 
 ### 1. Telegram/Discord Bildirim Sistemi
