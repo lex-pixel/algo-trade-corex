@@ -120,7 +120,7 @@ class BacktestResult:
 
 class BacktestEngine:
     """
-    Olay tabanlı (event-driven) basit backtest motoru.
+    Olay tabanlı (event-driven) backtest motoru.
 
     Her mumun kapanışında strateji çalıştırılır.
     Bu "bar-close" yaklaşımı gerçekçidir:
@@ -129,23 +129,31 @@ class BacktestEngine:
         - Emir bir sonraki mumun açılışında gerçekleşiyor (slipaj eklenmiş)
 
     Parametreler:
-        initial_capital : Başlangıç sermayesi (USD)
-        commission      : İşlem başına komisyon oranı (0.001 = %0.1)
-        slippage        : Slipaj oranı (0.0005 = %0.05) — emir kaymasi
-        max_risk_per_trade: Tek işlemde riske atılacak max sermaye oranı
+        initial_capital     : Başlangıç sermayesi (USD)
+        commission          : İşlem başına komisyon oranı (0.001 = %0.1)
+        commission_bnb      : BNB ile komisyon indirimi (True = %0.075)
+        slippage            : Slipaj oranı (0.0005 = %0.05) — emir kaymasi
+        slippage_volume_adj : Hacim bazlı slipaj ayarı — yüksek hacimde daha az kayma
+        max_risk_per_trade  : Tek işlemde riske atılacak max sermaye oranı
+        allow_short         : SAT sinyallerinde SHORT pozisyon aç
     """
 
     def __init__(
         self,
         initial_capital: float = 10_000.0,
-        commission: float = 0.001,       # %0.1 — Binance Spot
-        slippage: float = 0.0005,        # %0.05
-        max_risk_per_trade: float = 0.02, # %2 risk per trade
+        commission: float = 0.001,           # %0.1 — Binance Spot standart
+        commission_bnb: bool = False,        # BNB ile %0.075
+        slippage: float = 0.0005,            # %0.05
+        slippage_volume_adj: bool = True,    # Hacim bazlı slipaj ayarı
+        max_risk_per_trade: float = 0.02,    # %2 risk per trade
+        allow_short: bool = False,           # SHORT pozisyon desteği
     ):
-        self.initial_capital    = initial_capital
-        self.commission         = commission
-        self.slippage           = slippage
-        self.max_risk_per_trade = max_risk_per_trade
+        self.initial_capital     = initial_capital
+        self.commission          = commission * 0.75 if commission_bnb else commission
+        self.slippage            = slippage
+        self.slippage_volume_adj = slippage_volume_adj
+        self.max_risk_per_trade  = max_risk_per_trade
+        self.allow_short         = allow_short
 
     def run(
         self,
@@ -187,7 +195,10 @@ class BacktestEngine:
 
             # Equity curve: açık pozisyon varsa mark-to-market değeri
             if position:
-                unrealized_pnl = (current_price - position["entry_price"]) * position["size"]
+                if position.get("direction", "LONG") == "LONG":
+                    unrealized_pnl = (current_price - position["entry_price"]) * position["size"]
+                else:
+                    unrealized_pnl = (position["entry_price"] - current_price) * position["size"]
                 equity_values.append(capital + unrealized_pnl)
             else:
                 equity_values.append(capital)
@@ -211,17 +222,38 @@ class BacktestEngine:
                 logger.warning(f"Strateji hatasi bar {i}: {e}")
                 continue
 
+            # Hacim bazlı slipaj hesapla
+            volume_factor = self._volume_slippage(current_bar)
+
             # Sinyal işleme
             if signal.action == "AL" and position is None:
-                # Pozisyon aç
+                # LONG pozisyon aç
                 position = self._open_position(
-                    signal, current_price, current_time, capital
+                    signal, current_price, current_time, capital,
+                    direction="LONG", volume_factor=volume_factor
                 )
 
-            elif signal.action == "SAT" and position is not None:
-                # Sinyal kapama
+            elif signal.action == "SAT":
+                if position is not None and position["direction"] == "LONG":
+                    # Mevcut LONG'u sinyal ile kapat
+                    trade, capital = self._close_position(
+                        position, current_price, current_time, capital, "SIGNAL",
+                        volume_factor=volume_factor
+                    )
+                    trades.append(trade)
+                    position = None
+                elif position is None and self.allow_short:
+                    # SHORT pozisyon aç
+                    position = self._open_position(
+                        signal, current_price, current_time, capital,
+                        direction="SHORT", volume_factor=volume_factor
+                    )
+
+            elif signal.action == "AL" and position is not None and position["direction"] == "SHORT":
+                # SHORT pozisyonu AL sinyaliyle kapat
                 trade, capital = self._close_position(
-                    position, current_price, current_time, capital, "SIGNAL"
+                    position, current_price, current_time, capital, "SIGNAL",
+                    volume_factor=volume_factor
                 )
                 trades.append(trade)
                 position = None
@@ -257,42 +289,76 @@ class BacktestEngine:
 
     # ── Pozisyon Yönetimi ─────────────────────────────────────────────────────
 
+    def _volume_slippage(self, bar: pd.Series) -> float:
+        """
+        Hacim bazlı slipaj katsayisi.
+        Yuksek hacim -> dusuk slipaj (likidite yuksek, kayma az).
+        Dusuk hacim  -> yuksek slipaj.
+
+        Returns: 0.5 - 2.0 arasi carpan (1.0 = standart)
+        """
+        if not self.slippage_volume_adj:
+            return 1.0
+        vol = float(bar.get("volume", 0))
+        if vol <= 0:
+            return 1.0
+        # log-normalize: medyan volume ~100 BTC/saat varsayim
+        import math
+        log_vol = math.log(vol + 1)
+        log_ref = math.log(101)   # referans: 100 BTC
+        factor  = log_ref / max(log_vol, 0.1)
+        return max(0.5, min(2.0, factor))
+
     def _open_position(
         self,
         signal: Signal,
         price: float,
         time: datetime,
         capital: float,
+        direction: str = "LONG",
+        volume_factor: float = 1.0,
     ) -> dict:
         """
         Yeni pozisyon açar.
         Pozisyon büyüklüğü: max_risk_per_trade / stop_loss_distance ile hesaplanır.
+        direction: 'LONG' veya 'SHORT'
         """
-        # Slipaj: alış emri biraz daha pahalıya gerçekleşir
-        entry_price = price * (1 + self.slippage)
+        effective_slip = self.slippage * volume_factor
+
+        if direction == "LONG":
+            # LONG: alış emri biraz daha pahalıya gerçekleşir
+            entry_price = price * (1 + effective_slip)
+        else:
+            # SHORT: satış emri biraz daha ucuza gerçekleşir
+            entry_price = price * (1 - effective_slip)
 
         # Pozisyon boyutlandırma
-        # Eğer stop_loss varsa: riske edilen sermaye / stop mesafesi
-        if signal.stop_loss and signal.stop_loss < entry_price:
-            risk_amount    = capital * self.max_risk_per_trade
-            stop_distance  = entry_price - signal.stop_loss
-            size           = risk_amount / stop_distance
-            # Maksimum: tüm sermayenin %100'ü ile alınabilecek kadar
-            max_size = (capital / entry_price) * 0.95
-            size     = min(size, max_size)
+        # Stop_loss: LONG icin giris altinda, SHORT icin giris ustunde olmali
+        valid_sl = (
+            (signal.stop_loss is not None) and
+            (
+                (direction == "LONG"  and signal.stop_loss < entry_price) or
+                (direction == "SHORT" and signal.stop_loss > entry_price)
+            )
+        )
+        if valid_sl:
+            risk_amount   = capital * self.max_risk_per_trade
+            stop_distance = abs(entry_price - signal.stop_loss)
+            size          = risk_amount / stop_distance
+            max_size      = (capital / entry_price) * 0.95
+            size          = min(size, max_size)
         else:
-            # Stop yoksa sabit %20 sermaye kullan
             size = (capital * 0.20) / entry_price
 
         size = max(size, 0.0001)   # Minimum pozisyon
 
-        # Açılış komisyonu
         commission_cost = entry_price * size * self.commission
 
         return {
             "entry_price"  : entry_price,
             "entry_time"   : time,
             "size"         : size,
+            "direction"    : direction,
             "stop_loss"    : signal.stop_loss,
             "take_profit"  : signal.take_profit,
             "commission_in": commission_cost,
@@ -305,24 +371,29 @@ class BacktestEngine:
         time: datetime,
         capital: float,
         reason: str,
+        volume_factor: float = 1.0,
     ) -> tuple[Trade, float]:
         """
         Pozisyonu kapatır ve Trade objesi + yeni sermayeyi döndürür.
+        LONG ve SHORT her ikisini de destekler.
         """
-        # Slipaj: satış emri biraz daha ucuza gerçekleşir
-        exit_price = price * (1 - self.slippage)
+        effective_slip = self.slippage * volume_factor
+        direction      = position.get("direction", "LONG")
+        size           = position["size"]
+        entry_price    = position["entry_price"]
 
-        size         = position["size"]
-        entry_price  = position["entry_price"]
+        if direction == "LONG":
+            # LONG kapatma: satış emri biraz daha ucuza
+            exit_price = price * (1 - effective_slip)
+            gross_pnl  = (exit_price - entry_price) * size
+        else:
+            # SHORT kapatma: alış emri biraz daha pahalıya
+            exit_price = price * (1 + effective_slip)
+            gross_pnl  = (entry_price - exit_price) * size
+
         commission_out = exit_price * size * self.commission
+        net_pnl        = gross_pnl - position["commission_in"] - commission_out
 
-        # Brüt P&L
-        gross_pnl = (exit_price - entry_price) * size
-
-        # Net P&L (iki taraf komisyon düşüldükten sonra)
-        net_pnl = gross_pnl - position["commission_in"] - commission_out
-
-        # Yüzde getiri (başlangıç değerine göre)
         invested = entry_price * size
         pnl_pct  = (net_pnl / invested) * 100 if invested > 0 else 0.0
 
@@ -333,7 +404,7 @@ class BacktestEngine:
             exit_time   = time,
             entry_price = entry_price,
             exit_price  = exit_price,
-            direction   = "LONG",
+            direction   = direction,
             size        = size,
             pnl         = round(net_pnl, 4),
             pnl_pct     = round(pnl_pct, 4),
@@ -345,17 +416,28 @@ class BacktestEngine:
     def _check_exit(self, bar: pd.Series, position: dict) -> Optional[str]:
         """
         Mevcut mumda stop-loss veya take-profit tetiklendi mi kontrol eder.
-        Low fiyatı stop-loss altına düştüyse → STOP_LOSS
-        High fiyatı take-profit üstüne çıktıysa → TAKE_PROFIT
+
+        LONG:
+            Low <= stop_loss  -> STOP_LOSS
+            High >= take_profit -> TAKE_PROFIT
+        SHORT:
+            High >= stop_loss -> STOP_LOSS
+            Low <= take_profit -> TAKE_PROFIT
         """
-        low  = float(bar["low"])
-        high = float(bar["high"])
+        low       = float(bar["low"])
+        high      = float(bar["high"])
+        direction = position.get("direction", "LONG")
 
-        if position.get("stop_loss") and low <= position["stop_loss"]:
-            return "STOP_LOSS"
-
-        if position.get("take_profit") and high >= position["take_profit"]:
-            return "TAKE_PROFIT"
+        if direction == "LONG":
+            if position.get("stop_loss") and low <= position["stop_loss"]:
+                return "STOP_LOSS"
+            if position.get("take_profit") and high >= position["take_profit"]:
+                return "TAKE_PROFIT"
+        else:  # SHORT
+            if position.get("stop_loss") and high >= position["stop_loss"]:
+                return "STOP_LOSS"
+            if position.get("take_profit") and low <= position["take_profit"]:
+                return "TAKE_PROFIT"
 
         return None
 
