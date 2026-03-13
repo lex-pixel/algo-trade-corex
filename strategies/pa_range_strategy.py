@@ -89,11 +89,12 @@ class PARangeStrategy(BaseStrategy):
         self.fakeout_filter       = fakeout_filter
         self.rsi_divergence       = rsi_divergence
 
-        # PA-1/2/3 parametreleri
+        # PA-1/2/3/4 parametreleri
         self.eq_bonus       = 0.10   # EQ bölgesi confidence bonusu
         self.dev_bonus      = 0.15   # Deviasyon confirmation bonusu
         self.ob_bonus       = 0.12   # Order Block bonusu
         self.ob_lookback    = 10     # Order Block tespiti için kaç muma bakılır
+        self.ms_swing_n     = 5      # Market yapısı: swing high/low tespiti için kaç mum her yanda
 
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
@@ -218,6 +219,11 @@ class PARangeStrategy(BaseStrategy):
             df, support, resistance, range_width
         )
 
+        # ── Adım 6e: PA-4 Market Yapısı (CHoCH/BOS) ──────────────────────
+        # Bullish yapı → AL tercih (SAT sinyalini filtrele)
+        # Bearish yapı → SAT tercih (AL sinyalini filtrele)
+        market_structure = self._detect_market_structure(df)
+
         # ── Adım 7: RSI Divergence Bonus ──────────────────────────────────
         # Bullish divergence: fiyat yeni dip yaparken RSI yapmiyorsa — AL güclendirir
         # Bearish divergence: fiyat yeni zirve yaparken RSI yapmiyorsa — SAT güçlendirir
@@ -251,6 +257,11 @@ class PARangeStrategy(BaseStrategy):
 
         # AL: Fiyat desteğe yakın VE RSI aşırı satım bölgesinde
         if near_support and rsi < self.rsi_oversold:
+            # PA-4: Bearish market yapısı varsa AL engelle (CHoCH/BOS aşağı)
+            if market_structure == "bearish":
+                logger.debug(f"AL engellendi: PA-4 bearish market yapisi (CHoCH/BOS asagi)")
+                return Signal(action="BEKLE", confidence=0.0, reason="PA-4: Bearish market yapisi, AL engellendi")
+
             # TREND_DOWN'da AL engelle (trende karsi gitme)
             if _blocked_action == "AL":
                 logger.debug(f"AL engellendi: TREND_DOWN rejimi | RSI: {rsi:.1f}")
@@ -298,6 +309,11 @@ class PARangeStrategy(BaseStrategy):
 
         # SAT: Fiyat dirence yakın VE RSI aşırı alım bölgesinde
         elif near_resistance and rsi > self.rsi_overbought:
+            # PA-4: Bullish market yapısı varsa SAT engelle (CHoCH/BOS yukarı)
+            if market_structure == "bullish":
+                logger.debug(f"SAT engellendi: PA-4 bullish market yapisi (CHoCH/BOS yukari)")
+                return Signal(action="BEKLE", confidence=0.0, reason="PA-4: Bullish market yapisi, SAT engellendi")
+
             # TREND_UP'ta SAT engelle (yukari trende karsi satma)
             if _blocked_action == "SAT":
                 logger.debug(f"SAT engellendi: TREND_UP rejimi | RSI: {rsi:.1f}")
@@ -354,6 +370,92 @@ class PARangeStrategy(BaseStrategy):
             )
 
     # ── Yardımcı Metodlar ────────────────────────────────────────────────────
+
+    # ── PA-4: Market Yapısı (CHoCH / BOS) ────────────────────────────────────
+
+    def _detect_market_structure(self, df: pd.DataFrame) -> str:
+        """
+        PA-4: Market yapısı tespiti — Swing High/Low + CHoCH/BOS analizi.
+
+        Swing High: Her iki yanında ms_swing_n kadar daha düşük high olan tepe
+        Swing Low : Her iki yanında ms_swing_n kadar daha yüksek low olan dip
+
+        BOS   (Break of Structure): Önceki swing kırıldı → trend teyidi
+        CHoCH (Change of Character): Zıt yönde swing kırıldı → trend değişimi
+
+        Karar mantığı:
+          Son 2 Swing High her seferinde yükseldiyse VE son BOS yukarıysa → "bullish"
+          Son 2 Swing Low her seferinde düştüyse VE son BOS aşağıysa   → "bearish"
+          Aksi halde                                                     → "neutral"
+
+        Returns:
+            "bullish" | "bearish" | "neutral"
+        """
+        n = self.ms_swing_n
+        min_bars = n * 2 + 4
+        if len(df) < min_bars:
+            return "neutral"
+
+        highs  = df["high"].values
+        lows   = df["low"].values
+        closes = df["close"].values
+        size   = len(highs)
+
+        # Swing High/Low tespiti (son 60 mum yeterli)
+        look = min(size, 60)
+        swing_highs = []
+        swing_lows  = []
+
+        for i in range(n, look - n):
+            idx = size - look + i
+            # Swing High: her iki yanda n mum daha alçak
+            if all(highs[idx] > highs[idx - j] for j in range(1, n + 1)) and \
+               all(highs[idx] > highs[idx + j] for j in range(1, n + 1)):
+                swing_highs.append((idx, highs[idx]))
+            # Swing Low: her iki yanda n mum daha yüksek
+            if all(lows[idx] < lows[idx - j] for j in range(1, n + 1)) and \
+               all(lows[idx] < lows[idx + j] for j in range(1, n + 1)):
+                swing_lows.append((idx, lows[idx]))
+
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return "neutral"
+
+        # Son iki swing karsilastir
+        last_sh,  prev_sh  = swing_highs[-1][1], swing_highs[-2][1]
+        last_sl,  prev_sl  = swing_lows[-1][1],  swing_lows[-2][1]
+        last_close = float(closes[-1])
+
+        # Bullish yapı: Higher High + Higher Low
+        hh = last_sh > prev_sh   # Higher High
+        hl = last_sl > prev_sl   # Higher Low
+        # Bearish yapı: Lower High + Lower Low
+        lh = last_sh < prev_sh   # Lower High
+        ll = last_sl < prev_sl   # Lower Low
+
+        # BOS/CHoCH teyidi: fiyat son swing High/Low'u aştı mı?
+        bos_bullish = last_close > last_sh  # Fiyat son Swing High'ı kırdı
+        bos_bearish = last_close < last_sl  # Fiyat son Swing Low'u kırdı
+
+        if hh and hl:
+            structure = "bullish"
+        elif lh and ll:
+            structure = "bearish"
+        else:
+            structure = "neutral"
+
+        # BOS teyidi varsa daha net sonuç
+        if bos_bullish and structure != "bearish":
+            structure = "bullish"
+        elif bos_bearish and structure != "bullish":
+            structure = "bearish"
+
+        logger.debug(
+            f"PA-4 Market yapisi: {structure} | "
+            f"SH: {prev_sh:,.0f}->{last_sh:,.0f} ({'HH' if hh else 'LH'}) | "
+            f"SL: {prev_sl:,.0f}->{last_sl:,.0f} ({'HL' if hl else 'LL'}) | "
+            f"BOS_bull={bos_bullish} BOS_bear={bos_bearish}"
+        )
+        return structure
 
     # ── PA-2: Deviasyon Tespiti ───────────────────────────────────────────────
 
