@@ -89,12 +89,13 @@ class PARangeStrategy(BaseStrategy):
         self.fakeout_filter       = fakeout_filter
         self.rsi_divergence       = rsi_divergence
 
-        # PA-1/2/3/4 parametreleri
+        # PA-1/2/3/4/5 parametreleri
         self.eq_bonus       = 0.10   # EQ bölgesi confidence bonusu
         self.dev_bonus      = 0.15   # Deviasyon confirmation bonusu
         self.ob_bonus       = 0.12   # Order Block bonusu
         self.ob_lookback    = 10     # Order Block tespiti için kaç muma bakılır
         self.ms_swing_n     = 5      # Market yapısı: swing high/low tespiti için kaç mum her yanda
+        self.ote_bonus      = 0.15   # OTE Fibonacci bölgesi bonusu
 
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
@@ -224,6 +225,11 @@ class PARangeStrategy(BaseStrategy):
         # Bearish yapı → SAT tercih (AL sinyalini filtrele)
         market_structure = self._detect_market_structure(df)
 
+        # ── Adım 6f: PA-5 OTE (Optimal Trade Entry) Fibonacci ────────────
+        # Swing Low → Swing High arasına 0.618-0.786 bölgesi = ideal AL bölgesi
+        # Swing High → Swing Low arasına 0.618-0.786 bölgesi = ideal SAT bölgesi
+        ote_al_bonus, ote_sat_bonus = self._calc_ote_zone(df, price)
+
         # ── Adım 7: RSI Divergence Bonus ──────────────────────────────────
         # Bullish divergence: fiyat yeni dip yaparken RSI yapmiyorsa — AL güclendirir
         # Bearish divergence: fiyat yeni zirve yaparken RSI yapmiyorsa — SAT güçlendirir
@@ -288,6 +294,8 @@ class PARangeStrategy(BaseStrategy):
             confidence = min(1.0, confidence + dev_al_bonus)
             # PA-3 Order Block bonusu (kurumsal alim bolgesi)
             confidence = min(1.0, confidence + ob_al_bonus)
+            # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
+            confidence = min(1.0, confidence + ote_al_bonus)
 
             signal = Signal(
                 action="AL",
@@ -340,6 +348,8 @@ class PARangeStrategy(BaseStrategy):
             confidence = min(1.0, confidence + dev_sat_bonus)
             # PA-3 Order Block bonusu (kurumsal satis bolgesi)
             confidence = min(1.0, confidence + ob_sat_bonus)
+            # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
+            confidence = min(1.0, confidence + ote_sat_bonus)
 
             signal = Signal(
                 action="SAT",
@@ -370,6 +380,93 @@ class PARangeStrategy(BaseStrategy):
             )
 
     # ── Yardımcı Metodlar ────────────────────────────────────────────────────
+
+    # ── PA-5: OTE (Optimal Trade Entry) — Fibonacci 0.618 / 0.705 / 0.786 ─────
+
+    def _calc_ote_zone(self, df: pd.DataFrame, price: float) -> tuple[float, float]:
+        """
+        PA-5: OTE (Optimal Trade Entry) bölgesi tespiti.
+
+        Bullish OTE (AL için):
+            Son belirgin Swing Low → Swing High arasına Fibonacci çekiliyor.
+            0.618 - 0.786 retrace bölgesi = optimal long giriş.
+            Fiyat bu bölgedeyse → AL sinyali güçlenir (+ote_bonus)
+
+        Bearish OTE (SAT için):
+            Son belirgin Swing High → Swing Low arasına Fibonacci çekiliyor.
+            0.618 - 0.786 retrace bölgesi = optimal short giriş.
+            Fiyat bu bölgedeyse → SAT sinyali güçlenir (+ote_bonus)
+
+        0.705 = en sık kullanılan "sweet spot" OTE seviyesi (DD Finance)
+
+        Returns:
+            (al_bonus, sat_bonus): float tuple
+        """
+        n = self.ms_swing_n
+        min_bars = n * 2 + 10
+        if len(df) < min_bars:
+            return 0.0, 0.0
+
+        highs = df["high"].values
+        lows  = df["low"].values
+        size  = len(highs)
+        look  = min(size, 80)
+
+        # Swing noktalarını bul
+        swing_highs = []
+        swing_lows  = []
+        for i in range(n, look - n):
+            idx = size - look + i
+            if all(highs[idx] > highs[idx - j] for j in range(1, n + 1)) and \
+               all(highs[idx] > highs[idx + j] for j in range(1, n + 1)):
+                swing_highs.append((idx, float(highs[idx])))
+            if all(lows[idx] < lows[idx - j] for j in range(1, n + 1)) and \
+               all(lows[idx] < lows[idx + j] for j in range(1, n + 1)):
+                swing_lows.append((idx, float(lows[idx])))
+
+        if not swing_highs or not swing_lows:
+            return 0.0, 0.0
+
+        # OTE Fibonacci seviyeleri
+        FIB_LOW  = 0.618
+        FIB_HIGH = 0.786
+
+        al_bonus  = 0.0
+        sat_bonus = 0.0
+
+        # Bullish OTE: Son Swing Low'dan son Swing High'a çekilen Fibonacci
+        # Swing Low sonra Swing High olmalı (yukarı hareket)
+        last_sl_idx, last_sl = swing_lows[-1]
+        last_sh_idx, last_sh = swing_highs[-1]
+
+        if last_sl_idx < last_sh_idx and last_sh > last_sl:
+            # Fibonacci seviyeleri (retrace = geri çekilme)
+            move      = last_sh - last_sl
+            ote_low   = last_sh - move * FIB_HIGH   # 0.786 retrace
+            ote_high  = last_sh - move * FIB_LOW    # 0.618 retrace
+            if ote_low <= price <= ote_high:
+                al_bonus = self.ote_bonus
+                logger.debug(
+                    f"PA-5 Bullish OTE: SL={last_sl:,.0f} SH={last_sh:,.0f} | "
+                    f"OTE zone={ote_low:,.0f}-{ote_high:,.0f} | fiyat={price:,.0f} | "
+                    f"AL bonus: +{al_bonus}"
+                )
+
+        # Bearish OTE: Son Swing High'dan son Swing Low'a çekilen Fibonacci
+        # Swing High sonra Swing Low olmalı (aşağı hareket)
+        if last_sh_idx < last_sl_idx and last_sl < last_sh:
+            move      = last_sh - last_sl
+            ote_low   = last_sl + move * FIB_LOW    # 0.618 retrace yukarı
+            ote_high  = last_sl + move * FIB_HIGH   # 0.786 retrace yukarı
+            if ote_low <= price <= ote_high:
+                sat_bonus = self.ote_bonus
+                logger.debug(
+                    f"PA-5 Bearish OTE: SH={last_sh:,.0f} SL={last_sl:,.0f} | "
+                    f"OTE zone={ote_low:,.0f}-{ote_high:,.0f} | fiyat={price:,.0f} | "
+                    f"SAT bonus: +{sat_bonus}"
+                )
+
+        return al_bonus, sat_bonus
 
     # ── PA-4: Market Yapısı (CHoCH / BOS) ────────────────────────────────────
 
