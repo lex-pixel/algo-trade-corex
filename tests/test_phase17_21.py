@@ -555,3 +555,122 @@ class TestPhase21WalkForward:
         result = validator.run(df, RSIStrategy())
         # Daha kucuk step -> daha fazla donem
         assert result.total_periods >= 2
+
+
+# =============================================================================
+# Phase 22 — live_chart.py (TradingView benzeri canli grafik)
+# =============================================================================
+
+class TestPhase22LiveChart:
+    """scripts/live_chart.py testleri."""
+
+    def test_import(self):
+        """live_chart modulu import edilebilir."""
+        import scripts.live_chart as lc
+        assert hasattr(lc, "build_chart")
+        assert hasattr(lc, "fetch_ohlcv")
+        assert hasattr(lc, "load_bot_state")
+
+    def test_fake_ohlcv(self):
+        """_fake_ohlcv() dogru sutunlari uretir."""
+        from scripts.live_chart import _fake_ohlcv
+        df = _fake_ohlcv(50)
+        assert len(df) == 50
+        assert set(["open", "high", "low", "close", "volume"]).issubset(df.columns)
+
+    def test_fake_ohlcv_high_gte_low(self):
+        """High >= Low olmali."""
+        from scripts.live_chart import _fake_ohlcv
+        df = _fake_ohlcv(100)
+        assert (df["high"] >= df["low"]).all()
+
+    def test_calc_rsi_length(self):
+        """RSI serisi ayni uzunlukta olmali."""
+        from scripts.live_chart import _calc_rsi, _fake_ohlcv
+        df = _fake_ohlcv(50)
+        rsi = _calc_rsi(df["close"])
+        assert len(rsi) == len(df)
+
+    def test_calc_rsi_range(self):
+        """RSI 0-100 araliginda olmali (NaN haric)."""
+        from scripts.live_chart import _calc_rsi, _fake_ohlcv
+        df = _fake_ohlcv(100)
+        rsi = _calc_rsi(df["close"]).dropna()
+        assert (rsi >= 0).all() and (rsi <= 100).all()
+
+    def test_load_bot_state_missing(self, tmp_path, monkeypatch):
+        """bot_state.json yoksa bos dict doner."""
+        import scripts.live_chart as lc
+        monkeypatch.setattr(lc, "BOT_STATE", tmp_path / "nope.json")
+        assert lc.load_bot_state() == {}
+
+    def test_extract_trades_empty(self):
+        """Islem yoksa bos DataFrame doner."""
+        from scripts.live_chart import extract_trades
+        df = extract_trades({})
+        assert df.empty
+
+    def test_extract_open_position_none(self):
+        """Acik pozisyon yoksa None doner."""
+        from scripts.live_chart import extract_open_position
+        assert extract_open_position({}) is None
+
+    def test_extract_open_position_closed(self):
+        """CLOSED pozisyon None donmeli."""
+        from scripts.live_chart import extract_open_position
+        state = {"position": {"status": "CLOSED", "entry_price": 70000}}
+        assert extract_open_position(state) is None
+
+    def test_build_chart_creates_file(self, tmp_path, monkeypatch):
+        """build_chart() HTML dosyasi olusturur."""
+        import scripts.live_chart as lc
+        out_file = tmp_path / "test_chart.html"
+        monkeypatch.setattr(lc, "OUTPUT_FILE", out_file)
+        monkeypatch.setattr(lc, "REPORTS_DIR", tmp_path)
+        monkeypatch.setattr(lc, "fetch_ohlcv", lc._fake_ohlcv)
+        monkeypatch.setattr(lc, "load_bot_state", lambda: {})
+        lc.build_chart(bars=50)
+        assert out_file.exists()
+        assert out_file.stat().st_size > 1000
+
+    def test_build_chart_auto_refresh(self, tmp_path, monkeypatch):
+        """HTML icinde 30sn auto-refresh meta tag olmali."""
+        import scripts.live_chart as lc
+        out_file = tmp_path / "test_chart.html"
+        monkeypatch.setattr(lc, "OUTPUT_FILE", out_file)
+        monkeypatch.setattr(lc, "REPORTS_DIR", tmp_path)
+        monkeypatch.setattr(lc, "fetch_ohlcv", lc._fake_ohlcv)
+        monkeypatch.setattr(lc, "load_bot_state", lambda: {})
+        lc.build_chart(bars=50)
+        html = out_file.read_text(encoding="utf-8")
+        assert 'content="30"' in html
+
+    def test_build_chart_with_trades(self, tmp_path, monkeypatch):
+        """Islem verisi ile grafik olusturulabilir."""
+        import scripts.live_chart as lc
+        out_file = tmp_path / "test_chart2.html"
+        monkeypatch.setattr(lc, "OUTPUT_FILE", out_file)
+        monkeypatch.setattr(lc, "REPORTS_DIR", tmp_path)
+        monkeypatch.setattr(lc, "fetch_ohlcv", lc._fake_ohlcv)
+        fake_state = {
+            "trades": [
+                {"open_time": "2024-01-01T10:00:00Z", "close_time": "2024-01-01T14:00:00Z",
+                 "direction": "LONG", "entry_price": 69000, "exit_price": 71000, "pnl": 100},
+            ],
+            "position": {},
+            "current_capital": 10100,
+            "initial_capital": 10000,
+            "equity_history": [10000, 10100],
+            "iteration": 5,
+        }
+        monkeypatch.setattr(lc, "load_bot_state", lambda: fake_state)
+        lc.build_chart(bars=50)
+        assert out_file.exists()
+
+    def test_utc3_conversion(self):
+        """UTC+3 donusumu dogru calisir."""
+        from scripts.live_chart import _utc3
+        from datetime import datetime, timezone, timedelta
+        utc_dt = datetime(2024, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+        tr_dt = _utc3(utc_dt)
+        assert tr_dt.hour == 13  # 10 + 3
