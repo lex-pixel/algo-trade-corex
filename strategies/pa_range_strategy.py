@@ -97,6 +97,10 @@ class PARangeStrategy(BaseStrategy):
         self.ms_swing_n     = 5      # Market yapısı: swing high/low tespiti için kaç mum her yanda
         self.ote_bonus      = 0.15   # OTE Fibonacci bölgesi bonusu
         self.imbalance_bars = 30     # Imbalance tespiti için kaç muma bakılır
+        self.key_level_pct  = 0.005  # Key level yakınlık eşiği (%0.5)
+        self.key_bonus      = 0.10   # Key level yakınlık bonusu
+        self.amd_bars       = 24     # Power of 3 AMD analizi için kaç mum (24h = 1 gün)
+        self.sfp_bonus      = 0.13   # SFP (Swing Failure Pattern) bonusu
 
         self.regime_detector = MarketRegimeDetector() if use_regime_filter else None
 
@@ -231,6 +235,18 @@ class PARangeStrategy(BaseStrategy):
         # Swing High → Swing Low arasına 0.618-0.786 bölgesi = ideal SAT bölgesi
         ote_al_bonus, ote_sat_bonus = self._calc_ote_zone(df, price)
 
+        # ── Adım 6g: PA-8 Key Levels (Kurumsal Seviyeler) ─────────────────
+        # Daily/Weekly open yakınında sinyal daha güvenilir
+        key_al_bonus, key_sat_bonus = self._check_key_levels(df, price)
+
+        # ── Adım 6h: PA-9 Power of 3 (AMD) Yapısı ────────────────────────
+        # Accumulation → Manipulation → Distribution aşaması tespiti
+        amd_phase = self._detect_amd_phase(df)
+
+        # ── Adım 6i: PA-10 SFP (Swing Failure Pattern) ───────────────────
+        # Swing kırıldı ama kapanış içeride → güçlü ters sinyal
+        sfp_al_bonus, sfp_sat_bonus = self._detect_sfp(df, support, resistance)
+
         # ── Adım 7: RSI Divergence Bonus ──────────────────────────────────
         # Bullish divergence: fiyat yeni dip yaparken RSI yapmiyorsa — AL güclendirir
         # Bearish divergence: fiyat yeni zirve yaparken RSI yapmiyorsa — SAT güçlendirir
@@ -297,6 +313,16 @@ class PARangeStrategy(BaseStrategy):
             confidence = min(1.0, confidence + ob_al_bonus)
             # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
             confidence = min(1.0, confidence + ote_al_bonus)
+            # PA-8 Key Level bonusu (kurumsal seviye yakinligi)
+            confidence = min(1.0, confidence + key_al_bonus)
+            # PA-9 AMD: Distribution aşamasında AL engelle, Accumulation'da bonus
+            if amd_phase == "distribution":
+                return Signal(action="BEKLE", confidence=0.0,
+                              reason="PA-9: AMD Distribution asamasi, AL engellendi")
+            if amd_phase == "accumulation":
+                confidence = min(1.0, confidence + 0.08)
+            # PA-10 SFP bonusu (swing failure pattern)
+            confidence = min(1.0, confidence + sfp_al_bonus)
 
             # PA-6/7: TP hedefi — Imbalance > Likidite > Klasik (öncelik sırası)
             imb_tp = self._find_imbalance_tp(df, price, direction="AL")
@@ -356,6 +382,16 @@ class PARangeStrategy(BaseStrategy):
             confidence = min(1.0, confidence + ob_sat_bonus)
             # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
             confidence = min(1.0, confidence + ote_sat_bonus)
+            # PA-8 Key Level bonusu (kurumsal seviye yakinligi)
+            confidence = min(1.0, confidence + key_sat_bonus)
+            # PA-9 AMD: Accumulation aşamasında SAT engelle, Distribution'da bonus
+            if amd_phase == "accumulation":
+                return Signal(action="BEKLE", confidence=0.0,
+                              reason="PA-9: AMD Accumulation asamasi, SAT engellendi")
+            if amd_phase == "distribution":
+                confidence = min(1.0, confidence + 0.08)
+            # PA-10 SFP bonusu (swing failure pattern)
+            confidence = min(1.0, confidence + sfp_sat_bonus)
 
             # PA-6/7: TP hedefi — Imbalance > Likidite > Klasik (öncelik sırası)
             imb_tp  = self._find_imbalance_tp(df, price, direction="SAT")
@@ -827,6 +863,217 @@ class PARangeStrategy(BaseStrategy):
                     break
 
         return al_bonus, sat_bonus
+
+    # ── PA-8: Key Levels (Kurumsal Seviyeler) ────────────────────────────────
+
+    def _check_key_levels(
+        self, df: pd.DataFrame, price: float
+    ) -> tuple[float, float]:
+        """
+        PA-8: Kurumsal key level yakınlığı tespiti.
+
+        Daily Open   : Günün ilk kapanış fiyatı (00:00 UTC mumu)
+        Weekly Open  : Haftanın ilk mumu (Pazartesi 00:00)
+        Monday High/Low: Pazar/Pazartesi çerçevesi
+
+        Bu seviyelere yakın sinyal daha güvenilir çünkü kurumlar bu seviyeleri
+        referans alarak işlem yapar.
+
+        Returns:
+            (al_bonus, sat_bonus): float tuple
+        """
+        if len(df) < 2 or not hasattr(df.index, 'day_of_week'):
+            return 0.0, 0.0
+
+        try:
+            prox = price * self.key_level_pct  # %0.5 yakınlık
+
+            key_levels = []
+
+            # Daily Open: Bugünün ilk mumunun open değeri
+            today = df.index[-1].date()
+            today_candles = df[df.index.date == today]
+            if len(today_candles) > 0:
+                daily_open = float(today_candles.iloc[0]["open"])
+                key_levels.append(daily_open)
+
+            # Weekly Open: Bu haftanın ilk mumunun open değeri
+            week_start = df.index[-1] - pd.Timedelta(days=df.index[-1].day_of_week)
+            week_candles = df[df.index >= week_start.normalize()]
+            if len(week_candles) > 0:
+                weekly_open = float(week_candles.iloc[0]["open"])
+                key_levels.append(weekly_open)
+
+            # Monday High/Low
+            monday_candles = df[df.index.day_of_week == 0]
+            if len(monday_candles) > 0:
+                monday_high = float(monday_candles["high"].iloc[-1])
+                monday_low  = float(monday_candles["low"].iloc[-1])
+                key_levels.extend([monday_high, monday_low])
+
+            al_bonus  = 0.0
+            sat_bonus = 0.0
+
+            for level in key_levels:
+                if abs(price - level) <= prox:
+                    # Fiyat key level altındaysa ve yakınsa → AL güçlü
+                    if price <= level:
+                        al_bonus = max(al_bonus, self.key_bonus)
+                        logger.debug(f"PA-8 Key level AL: fiyat={price:,.0f} <= level={level:,.0f}")
+                    # Fiyat key level üstündeyse ve yakınsa → SAT güçlü
+                    else:
+                        sat_bonus = max(sat_bonus, self.key_bonus)
+                        logger.debug(f"PA-8 Key level SAT: fiyat={price:,.0f} >= level={level:,.0f}")
+
+            return al_bonus, sat_bonus
+
+        except Exception as e:
+            logger.debug(f"PA-8 Key levels hesaplanamadi: {e}")
+            return 0.0, 0.0
+
+    # ── PA-9: Power of 3 (AMD — Accumulation / Manipulation / Distribution) ──
+
+    def _detect_amd_phase(self, df: pd.DataFrame) -> str:
+        """
+        PA-9: Power of 3 (AMD) yapısı tespiti.
+
+        ICT'nin Power of 3 konsepti:
+          Accumulation  : Range içinde fiyat sıkışıyor (düşük volatilite, dar range)
+          Manipulation  : Fiyat bir yöne sert hareket eder (stop avı), sahte kırılım
+          Distribution  : Asıl yön ortaya çıkar, güçlü trend hareketi
+
+        Basit tespit:
+          - Son amd_bars mumun range'i ortalamaya kıyasla dar → Accumulation
+          - Önceki mumlara göre ani yüksek hacim + büyük mum → Manipulation
+          - Son mum büyük + kapanış net bir yönde → Distribution
+
+        Returns:
+            "accumulation" | "manipulation" | "distribution" | "neutral"
+        """
+        n = self.amd_bars
+        if len(df) < n + 5:
+            return "neutral"
+
+        try:
+            window  = df.iloc[-n:]
+            prev    = df.iloc[-(n + 5):-n]
+
+            # Range hesabı
+            curr_range = float((window["high"] - window["low"]).mean())
+            prev_range = float((prev["high"] - prev["low"]).mean()) if len(prev) > 0 else curr_range
+
+            # Hacim hesabı
+            curr_vol  = float(window["volume"].mean())
+            prev_vol  = float(prev["volume"].mean()) if len(prev) > 0 else curr_vol
+
+            # Son mum gövdesi
+            last_body = abs(float(df["close"].iloc[-1]) - float(df["open"].iloc[-1]))
+            avg_body  = float(abs(window["close"] - window["open"]).mean())
+
+            # Accumulation: range daralıyor, hacim düşük
+            if curr_range < prev_range * 0.7 and curr_vol < prev_vol * 0.8:
+                return "accumulation"
+
+            # Distribution: son mum büyük, hacim yüksek
+            if last_body > avg_body * 2.0 and float(df["volume"].iloc[-1]) > curr_vol * 1.5:
+                return "distribution"
+
+            # Manipulation: hacim ani spike, range genişliyor ama kapanış ortada
+            last_high  = float(df["high"].iloc[-1])
+            last_low   = float(df["low"].iloc[-1])
+            last_close = float(df["close"].iloc[-1])
+            last_range = last_high - last_low
+            close_pos  = (last_close - last_low) / last_range if last_range > 0 else 0.5
+
+            if (float(df["volume"].iloc[-1]) > curr_vol * 2.0
+                    and 0.3 < close_pos < 0.7):  # Kapanış ortada = manipulation
+                return "manipulation"
+
+            return "neutral"
+
+        except Exception as e:
+            logger.debug(f"PA-9 AMD tespiti hatasi: {e}")
+            return "neutral"
+
+    # ── PA-10: SFP (Swing Failure Pattern) ───────────────────────────────────
+
+    def _detect_sfp(
+        self, df: pd.DataFrame, support: float, resistance: float
+    ) -> tuple[float, float]:
+        """
+        PA-10: Swing Failure Pattern (SFP) tespiti.
+
+        SFP: Önceki swing high/low kırıldı AMA kapanış içeride kaldı.
+            → Sahte kırılım + güçlü geri dönüş sinyali
+
+        Bullish SFP: Son mum bir önceki swing low'u kırdı (low < prev_swing_low)
+                     AMA close > prev_swing_low → AL sinyali güçlü
+        Bearish SFP: Son mum bir önceki swing high'ı kırdı (high > prev_swing_high)
+                     AMA close < prev_swing_high → SAT sinyali güçlü
+
+        Deviasyon ile farkı: SFP önceki swing noktasını referans alır,
+        Deviasyon ise mevcut range support/resistance'ını referans alır.
+
+        Returns:
+            (al_bonus, sat_bonus): float tuple
+        """
+        n = self.ms_swing_n
+        if len(df) < n * 2 + 6:
+            return 0.0, 0.0
+
+        try:
+            highs = df["high"].values
+            lows  = df["low"].values
+            size  = len(highs)
+            look  = min(size - 1, 40)  # Son 40 mumda swing ara
+
+            swing_highs = []
+            swing_lows  = []
+
+            for i in range(n, look - n):
+                idx = size - 1 - look + i  # Son mumu hariç tut
+                if idx <= 0 or idx >= size - 1:
+                    continue
+                if all(highs[idx] > highs[idx - j] for j in range(1, n + 1)) and \
+                   all(highs[idx] > highs[idx + j] for j in range(1, n + 1)):
+                    swing_highs.append(float(highs[idx]))
+                if all(lows[idx] < lows[idx - j] for j in range(1, n + 1)) and \
+                   all(lows[idx] < lows[idx + j] for j in range(1, n + 1)):
+                    swing_lows.append(float(lows[idx]))
+
+            last      = df.iloc[-1]
+            last_high = float(last["high"])
+            last_low  = float(last["low"])
+            last_close = float(last["close"])
+
+            al_bonus  = 0.0
+            sat_bonus = 0.0
+
+            # Bullish SFP: son mum swing low kırdı ama içeride kapandı
+            if swing_lows:
+                prev_sl = swing_lows[-1]
+                if last_low < prev_sl and last_close >= prev_sl:
+                    al_bonus = self.sfp_bonus
+                    logger.debug(
+                        f"PA-10 Bullish SFP: low={last_low:,.0f} < swing_low={prev_sl:,.0f}, "
+                        f"close={last_close:,.0f} >= swing_low | AL bonus: +{al_bonus}"
+                    )
+
+            # Bearish SFP: son mum swing high kırdı ama içeride kapandı
+            if swing_highs:
+                prev_sh = swing_highs[-1]
+                if last_high > prev_sh and last_close <= prev_sh:
+                    sat_bonus = self.sfp_bonus
+                    logger.debug(
+                        f"PA-10 Bearish SFP: high={last_high:,.0f} > swing_high={prev_sh:,.0f}, "
+                        f"close={last_close:,.0f} <= swing_high | SAT bonus: +{sat_bonus}"
+                    )
+
+            return al_bonus, sat_bonus
+
+        except Exception as e:
+            logger.debug(f"PA-10 SFP tespiti hatasi: {e}")
+            return 0.0, 0.0
 
     def _calc_confidence_al(
         self, price: float, support: float, resistance: float, rsi: float

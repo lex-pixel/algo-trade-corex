@@ -258,6 +258,417 @@ Yapilan degisiklikler:
 - Komisyon + slippage daha gercekci modelleme
 - Farkli piyasa kosullarinda test (bull/bear/sideways)
 
+---
+
+## PLANLANAN GELISTIRME — PA (PRICE ACTION) IYILESTIRMELERI — 2026-03-12
+
+### Kaynak
+DD Finance Public Video Notları (PDF) incelendi — 2026-03-12
+
+### Durum — 2026-03-13 TAMAMLANDI
+`strategies/pa_range_strategy.py` — PA-1'den PA-10'a kadar tüm özellikler eklendi.
+
+| # | Özellik | Commit |
+|---|---------|--------|
+| PA-1 | EQ Seviyesi + S/R Flip | 4f8220b |
+| PA-2 | Deviasyon Tespiti | 4f8220b |
+| PA-3 | Order Block | 4f8220b |
+| PA-4 | Market Yapısı (CHoCH/BOS) | 9405435 |
+| PA-5 | OTE Fibonacci 0.618-0.786 | 9c3dfe3 |
+| PA-6 | Imbalance/GAP → TP hedefi | e9855a8 |
+| PA-7 | Likidite Tabanlı TP | 410103d |
+| PA-8 | Key Levels (Daily/Weekly Open) | — |
+| PA-9 | Power of 3 (AMD) | — |
+| PA-10 | SFP (Swing Failure Pattern) | — |
+
+### DD Finance Notlarindan Cikan PA Gelistirme Listesi
+
+#### ONCELIK 1 — En Etkili, Hemen Uygulanabilir
+
+**1. EQ (Equilibrium) Seviyesi + S/R Flip Tespiti**
+- Kaynak: "Price Action Range" + "S/R Flip" bolumu
+- Range ortasi = EQ = (RL + RH) / 2
+- 0.5-1.0 arasi: fiyatin pahali bolgesi → short tercih
+- 0.0-0.5 arasi: fiyatin ucuz bolgesi → long tercih
+- EQ noktasi S/R Flip gorevi gorur: eskiden destek olan bolgeden gecilince direnc, direncten gecilince destek
+- Yapilacak: `generate_signal()` icerisine `price_position` hesabina gore confidence ayarlamasi
+  - price_position > 0.5 → SAT konfirmasyon bonusu +0.10
+  - price_position < 0.5 → AL konfirmasyon bonusu +0.10
+
+**2. Deviasyon Tespiti (Range Disina Sapma + Geri Donus)**
+- Kaynak: "Price Action Range" + "Power of 3 Box"
+- Fiyat RL altina veya RH ustune cikarsa = deviasyon (sahte kirilim)
+- Deviasyon sonrasi range icine geri girme = GUCLU AL/SAT sinyali
+- Kural: Fiyat range disina cikti AMA kapanisin range icinde olmasi = deviasyon onaylandi
+- Yapilacak: `_detect_deviation()` metodu
+  - Son mum high > RH ama close <= RH → bearish deviasyon → SAT
+  - Son mum low < RL ama close >= RL → bullish deviasyon → AL
+  - Confidence +0.15 (deviasyon sonrasi re-test en guclu sinyal)
+
+**3. Order Block (OB) Tespiti**
+- Kaynak: "Price Action: OrderBlock"
+- Tanim: 2 farkli renkli ardisik mum + fitil kurali
+  - Bullish OB: kirmizi mum ardından buyuk yesil mum (onceki dususu kapatan)
+  - Bearish OB: yesil mum ardından buyuk kirmizi mum
+- Kural: Bullish OB fitilinin gunu, ayni yondeki mumun altinda olmamali
+- RL bolgesinde bullish OB = AL konfirmasyon → confidence +0.12
+- RH bolgesinde bearish OB = SAT konfirmasyon → confidence +0.12
+- NOT: OB tek basina kullanilmaz, diger yapilarla birlikte
+- Yapilacak: `_find_order_block()` metodu — son N mumdaki OB tespiti
+
+**4. Market Yapisi (Swing High/Low + CHoCH/BOS)**
+- Kaynak: "Market Yapisi" bolumu
+- Swing High: her iki tarafinda daha dusuk mumlar olan tepe
+- Swing Low: her iki tarafinda daha yuksek mumlar olan dip
+- CHoCH (Change of Character): son tepe kirilindan once son dibin kaybedilmesi → trend degisimi
+- BOS (Break of Structure): onceki swing High/Low kiriliyor → trend teyidi
+- Kullanim: Market yapisi bullish → sadece AL tercih et, bearish → sadece SAT tercih et
+- Oncelik sirasi: Breaker/MSB > BOS > CHoCH
+- Yapilacak: `_detect_market_structure()` metodu → bullish/bearish/neutral dondur
+
+#### ONCELIK 2 — Orta Zorlukta
+
+**5. OTE (Optimal Trade Entry) — Fibonacci 0.618-0.705-0.786**
+- Kaynak: "Fibonacci Kullanimi / Optimal Trade Entry"
+- Swing Low ile Swing High arasina cekilen Fibonacci
+- 0.618 - 0.705 - 0.786 araligi = optimal long bolgesi (AL icin)
+- Short icin: Swing High - Swing Low arasi, ayni seviyeler
+- 0.705 en cok kullanilan optimal giris noktasi
+- Yapilacak: `_calc_ote_zone()` metodu → OTE bolgesi hesapla, fiyat bu bolgede mi kontrol et
+- Confidence boost: fiyat OTE bolgesiyle RL/RH cakisiyorsa +0.15
+
+**6. Imbalance / GAP Tespiti — TP Hedefi**
+- Kaynak: "Price Action: Imbalance"
+- Tanim: Hizli hareketle olusan bosluk — onceki mumun fityilinin gitmedi diger mumun kapanisina kadar
+- Kural: Eger bir fitil onceki boslugu dolduruyorsa Imbalance sayilmaz
+- Kullanim: TP hedefi olarak kullan → en yakin Imbalance bolgesi
+- CME GAP: Hafta sonu bosluklar — dolurulma olasiligi yuksek
+- Yapilacak: `_find_imbalance()` metodu → en yakin doldurulmamis bosluk → TP hedefi olarak don
+- Mevcut TP formulu `price + range*0.5` yerine Imbalance hedefi kullan
+
+**7. Likidite Tabanli TP Hedefi**
+- Kaynak: "Price Action: Likidite"
+- Likidite = swing noktalarin ustü/alti (stop avciligi bolgesi)
+- Equal: Ayni seviyeye cok kez temas = likidite birkiyor → kirilim buyuk olur
+- TP hedefi = bir onceki Swing High (bullish) veya Swing Low (bearish) likiditesi
+- Kural: Likidite hedef noktasidir, GIRIS noktasi degil
+- Yapilacak: TP hesabini `_find_liquidity_target()` ile guncelle
+
+#### ONCELIK 3 — Karmasik / Uzun Vadeli
+
+**8. Key Levels (Kurumsal Seviyeler)**
+- Kaynak: "Anahtar Zaman Seviyeleri"
+- Daily Open, Weekly Open, Monthly Open, Yearly Open, Monday High/Low
+- Bu seviyelere yakin sinyal daha guclu
+- Yapilacak: `data/fetcher.py` ile periyodik Open fiyatlarini cek, KEY_LEVELS listesi olustur
+- Confidence boost: fiyat key level yakinindaysa +0.10
+
+**9. Power of 3 (AMD) Yapisi**
+- Kaynak: "Power of 3 Box"
+- Accumulation (birikim, range) → Manipulation (deviasyon, stop avciligi) → Distribution (gercek hareket)
+- Deviasyon = Power of 3 manipulasyon fazinda range disina sapma
+- Geri donus + range icinde range EQ'yu gecme = distribution baslangici
+- Yapilacak: Deviasyon + EQ kirimi kombosu → super sinyal (confidence 0.85+)
+
+**10. Swing Failure Pattern (SFP)**
+- Kaynak: "Swing Failure Pattern"
+- Bearish SFP: Son tepenin ustune fitil atar, asagi kapanir → SAT
+- Bullish SFP: Son dibin altina fitil atar, yukari kapanir → AL
+- Kural: O bolgede kapanish olmamali (sadece fitil)
+- Stop: Likiditey alan fityilin ustunde/altinda
+- Yapilacak: `_detect_sfp()` metodu → son 5 mumdaki SFP tespiti
+
+---
+
+## PLANLANAN GELISTIRME — R:R (RISK:REWARD) HESAPLAMA SISTEMI — 2026-03-12
+
+### Kaynak
+RR hesaplama.png goruntusu incelendi — Bilesik buyume formulune dayali R:R sistemi
+
+### Temel Matematik
+```
+Aylik buyume formulu   : r = hedef_pct / 100
+Yillik bilesik getiri  : (1 + r)^12 - 1
+Ornek: Aylik %10       : (1 + 0.10)^12 - 1 = 2.1384 = Yillik %213.84
+
+Gerekli R:R formulu:
+  Beklenen deger = (win_rate * avg_win) - (loss_rate * avg_loss) >= hedef_per_trade
+  min_rr = (hedef_per_trade / risk_per_trade) / win_rate
+```
+
+### Yeni Modul: `risk/rr_calculator.py`
+
+#### Sorumluluklar
+1. Hedef getiriye gore gerekli minimum R:R hesapla
+2. Her sinyale R:R skoru hesapla (SL/TP mesafesine gore)
+3. Minimum R:R saglanmiyorsa islemi reddet (RiskManager entegrasyonu)
+4. Kaldiraca gore lot boyutu onerisi
+5. Bilesik buyume projeksiyonu (aylik/yillik tablo)
+
+#### Ozellestirilebilir Parametreler
+| Parametre | Aciklama | Varsayilan |
+|---|---|---|
+| `monthly_target_pct` | Hedef aylik buyume | 0.10 (%10) |
+| `risk_per_trade_pct` | Her islemde riske edilecek sermaye | 0.02 (%2) |
+| `min_rr_ratio` | Kabul edilecek minimum R:R | 1.5 |
+| `win_rate_estimate` | Tahmini kazanma orani | 0.55 |
+| `leverage` | Kaldirac katsayisi (Futures) | 1.0 (spot) |
+| `max_lot_pct` | Maksimum lot (sermayenin yuzdesi) | 0.10 (%10) |
+
+#### Temel Metotlar
+```python
+calc_required_rr(monthly_target, win_rate, risk_pct, trades_per_month)
+  → Gerekli minimum R:R dondurur
+
+calc_trade_rr(entry, stop_loss, take_profit)
+  → Bu islemin R:R oranini dondurur
+
+calc_lot_size(capital, risk_pct, entry, stop_loss, leverage)
+  → Kaldiraca gore optimal lot buyuklugu dondurur
+
+is_rr_acceptable(entry, stop_loss, take_profit) -> bool
+  → R:R minimum esgigi sagliyor mu?
+
+compound_projection(capital, monthly_pct, months)
+  → Bilesik buyume tablosu (pandas DataFrame)
+
+adjust_tp_for_rr(entry, stop_loss, min_rr) -> float
+  → Minimum R:R'yi saglayacak TP fiyatini hesapla
+```
+
+#### RiskManager Entegrasyonu
+- `evaluate_signal()` icerisine R:R kontrolu eklenir
+- SL ve TP hesaplandiktan sonra R:R kontrolu yapilir:
+  ```
+  trade_rr = (take_profit - entry) / (entry - stop_loss)
+  if trade_rr < min_rr_ratio:
+      return reject("R:R yetersiz: {trade_rr:.2f} < {min_rr_ratio}")
+  ```
+
+#### Kaldiraca Gore Lot Hesabi
+```
+Spot (1x):
+  lot = (capital * risk_pct) / (entry - stop_loss)
+
+Futures (Nx):
+  margin = capital * risk_pct  (riske edilen tutar)
+  lot    = (margin * leverage) / (entry - stop_loss)
+  max_lot = (capital * max_lot_pct * leverage) / entry
+  lot    = min(lot, max_lot)
+```
+
+#### Bilesik Buyume Projeksiyonu (Ornek)
+| Ay | %5/ay | %10/ay | %15/ay |
+|---|---|---|---|
+| 1 | $10,500 | $11,000 | $11,500 |
+| 3 | $11,576 | $13,310 | $15,209 |
+| 6 | $13,401 | $17,716 | $23,130 |
+| 12 | $17,959 | $31,384 | $53,503 |
+
+### Uygulama Sirasi
+1. [ ] `risk/rr_calculator.py` — yeni modul olustur
+2. [ ] `risk/risk_manager.py` — `evaluate_signal()` icerisine R:R kontrolu ekle
+3. [ ] `risk/position_sizer.py` — kaldiraca gore lot hesabi guncelle
+4. [ ] `trading/main_loop.py` — rr_calculator ile entegrasyon
+5. [ ] Backtest: R:R filtresi acik/kapali karsilastirma
+
+### Onemli Notlar
+- R:R tek basina yeterli degil — market yapisi + sinyal kalitesi de onemli
+- Minimum R:R 1.5:1 tavsiye (kazanc kayiptan 1.5 kat buyuk olmali)
+- Kaldirach kullanim durumunda R:R hesabi margin bazinda yapilmali
+- Bilesik buyume gercekci degil — her ay sabit getiri mumkun degil
+  Gercekci hedef: Aylik %5-8 (yillik %80-150)
+
+---
+
+## PLANLANAN GELISTIRME — VWAP + FUNDING RATE + OPEN INTEREST — 2026-03-12
+
+### Amac
+Mevcut sistemi bosaltmadan (RSI/MACD/BB/ATR/ADX/Volume zaten var) 3 yuksek degerli
+veri kaynagi eklenerek sinyal kalitesi arttirilacak.
+
+### 1. VWAP (Volume Weighted Average Price)
+- Tanim: Gunluk islem hacmiyle agirliklandirilmis ortalama fiyat
+- Formul: VWAP = kumulatif(fiyat * hacim) / kumulatif(hacim)
+- Kurumsal oyuncular destek/direnc olarak kullanir — en guclu intraday seviyesi
+- Kullanim kurallari:
+  - Fiyat > VWAP → bullish bias → AL sinyali guclu
+  - Fiyat < VWAP → bearish bias → SAT sinyali guclu
+  - Fiyat VWAP'a re-test → potansiyel giris noktasi
+  - Confidence boost: sinyal yonu VWAP biasina uyuyorsa +0.08
+- API/Hesaplama: Dis bagimlililik yok, OHLCV verisinden hesaplanir
+- Eklenecek dosya: `strategies/indicators.py` icerisine `calc_vwap()` metodu
+- Feature olarak ML modeline de eklenebilir: `vwap_distance` (fiyatin VWAP'tan uzakligi)
+
+### 2. Funding Rate (Binance Futures API)
+- Tanim: Futures piyasasinda long/short pozisyon dengesi gostergesi
+- Her 8 saatte bir guncellenir (00:00, 08:00, 16:00 UTC)
+- Yorum:
+  - Yuksek pozitif (+0.1%+) → herkes long → asirimdi long → dusus riski yuksek
+    - AL sinyali varsa confidence -0.10 (kontra sinyal)
+    - SAT sinyali varsa confidence +0.10 (teyit)
+  - Cok negatif (-0.05%-) → herkes short → asirimdi short → yukselis riski
+    - SAT sinyali varsa confidence -0.10
+    - AL sinyali varsa confidence +0.10
+  - Noralde (+-0.01%) → tarafsiz, etki yok
+- API: Binance Futures `/fapi/v1/fundingRate` endpoint, CCXT ile cekilir
+- Onbellekleme: 8 saatlik (gereksiz API cagrisi engellenir)
+- Eklenecek dosya: `ml/external_data.py` icerisine `get_funding_rate()` metodu
+- Kaldirach sistemiyle entegrasyon: yuksek funding rate varken kaldirach azalt
+
+### 3. Open Interest (OI)
+- Tanim: Futures piyasasindaki toplam acik sozlesme sayisi/degeri
+- Yorum (fiyat + OI kombinasyonu):
+  | Fiyat | OI    | Anlam                              | Aksiyon         |
+  |-------|-------|------------------------------------|-----------------|
+  | Yukari | Yukari | Guclu trend, para giriyor          | Trendi teyit et |
+  | Yukari | Asagi  | Zayif hareket, kapanis var         | Dikkatli ol     |
+  | Asagi  | Yukari | Guclu dusus, yeni short aciliyor   | Trendi teyit et |
+  | Asagi  | Asagi  | Panik kapanislar, dip yakin olabil | Dikkatli AL     |
+- OI degisimi (delta) daha anlamli: ani OI artisi = buyuk pozisyon acildi
+- API: Binance Futures `/fapi/v1/openInterest`, CCXT ile cekilir
+- Onbellekleme: 1 saatlik
+- Eklenecek dosya: `ml/external_data.py` icerisine `get_open_interest()` metodu
+- Feature olarak ML modeline: `oi_change_pct` (1 saatlik OI degisim yuzdesi)
+
+### Uygulama Sirasi
+1. [ ] VWAP — `strategies/indicators.py` + `ml/feature_engineering.py`
+2. [ ] Funding Rate — `ml/external_data.py` + `strategies/pa_range_strategy.py`
+3. [ ] Open Interest — `ml/external_data.py` + `ml/feature_engineering.py`
+4. [ ] Backtest: Bu 3 ozellik acik/kapali karsilastirma
+
+### Onemli Notlar
+- Funding Rate ve OI sadece Futures piyasasinda var — spot botumuz okuma amacli kullanir
+- VWAP gunluk sifirlanan bir deger — 1h botumuz icin gunluk VWAP kullanilmali
+- Bu 3 ozellik kaldirach sistemiyle birlikte gelistirilecek (funding rate ortak)
+- Bunun otesinde (on-chain, order book, liquidation map) karmasi artar, fayda azalir
+
+### Tespit Edilen Sorunlar ve Cozumler
+
+#### 1. Basit Min/Max Yerine Swing High/Low Tespiti
+- **Sorun:** `window.min()` / `window.max()` tek bir spike ile bozuluyor
+- **Cozum:** Gercek destek = en az 2-3 kez test edilmis fiyat bolgesi
+- **Yapilacak:** `_find_swing_levels()` metodu — her iki tarafinda daha dusuk/yuksek mum olan noktalari bul
+
+#### 2. ATR Tabanli Proximity (Sabit %2 yerine)
+- **Sorun:** Sabit `proximity_pct=0.02` volatiliteye gore cok genis veya dar kalab ilir
+  - Range dar ise %2 = cok kucuk (hic sinyal yok)
+  - Range genis ise %2 = cok buyuk (zayif bolgede de giris)
+- **Cozum:** `proximity = 1.5 * ATR` — piyasa volatilitesine otomatik adapte olur
+- **Yapilacak:** `PARangeStrategy.__init__` parametresi: `use_atr_proximity=True`
+
+#### 3. Multi-Timeframe (MTF) Destek/Direnc
+- **Sorun:** Sadece 1h seviyelerine bakiliyor; 4h seviyeleri cok daha guclu
+- **Cozum:** 4h destek/direnci 1h sinyaliyle cakisiyorsa `confidence += 0.15`
+- **Yapilacak:** `generate_signal()` icine 4h OHLCV alip ayri seviye hesabi
+
+#### 4. Dinamik/Adaptif Lookback
+- **Sorun:** Sabit `lookback=50` — trend piyasada 50 mumun min/max'i yanlis seviye verir
+- **Cozum:** ADX'e gore lookback ayarla:
+  - ADX < 20 (range):    lookback = 30
+  - ADX 20-30 (karisik): lookback = 50
+  - ADX > 30 (trend):    PA stratejisi devre disi (sadece trend takibi)
+- **Yapilacak:** `_adaptive_lookback(adx)` yardimci metodu
+
+#### 5. Birden Fazla Destek/Direnc Seviyesi (Cluster Analysis)
+- **Sorun:** Tek bir destek/direnc seviyesi — piyasada genellikle birden fazla zone var
+- **Cozum:** Fiyat yugunluk analizi: son 100 mumdaki kapanislar histogram ile kume analizi
+  - En yogun bolgeler = gercek destek/direnc
+- **Yapilacak:** `_find_price_clusters()` — numpy histogram ile top-3 seviye
+
+### Uygulama Sirasi
+1. [ ] ATR tabanli proximity (en kolay, en etkili)
+2. [ ] Swing High/Low tespiti (min/max yerine)
+3. [ ] Dinamik lookback (ADX entegrasyonu)
+4. [ ] MTF destek/direnc (4h verisi gerekli)
+5. [ ] Cluster analysis (en karmasik, en guclu)
+
 ### NOT: PA Stratejisi Detayli Inceleme
 - Bir sonraki oturumda PA (Price Action Range) stratejisi detayli konusulacak
 - Mevcut parametreler, iyilestirme alanlari, alternatif yaklasimlar tartisılacak
+
+---
+
+## PLANLANAN GELISTIRME — KALDIRAC (LEVERAGE) SISTEMI — 2026-03-12
+
+### Hedef
+Simdi spot trading yapiyoruz (Binance Testnet Spot). Gercek kaldiraci desteklemek icin
+Binance Futures API entegrasyonu yapilacak.
+
+### Mimari Degisiklikler
+
+#### 1. Binance Futures API Baglantisi
+- Yeni endpoint: `https://fapi.binance.com` (USD-M Futures)
+- Testnet: `https://testnet.binancefuture.com`
+- CCXT: `ccxt.binanceusdm()` veya `ccxt.binance({'options': {'defaultType': 'future'}})`
+- `.env` dosyasina FUTURES_API_KEY / FUTURES_API_SECRET eklenmeli
+- Mevcut spot key'den AYRI — Futures icin ayri API key gerekebilir
+
+#### 2. OrderManager Guncellemesi (`trading/order_manager.py`)
+- `open_long()` / `open_short()` metotlari Futures emri gonderecek
+- Leverage ayari: `set_leverage(symbol, leverage)` cagrilmali (once emr acilmadan)
+- Margin modu: `ISOLATED` (tavsiye) — her pozisyon kendi margini ile calisir
+  - ISOLATED: Sadece o pozisyona ayirilan margin kaybolur (tum hesabi yakmaz)
+  - CROSS: Tum hesap margini kullanir (tehlikeli)
+- Position mode: ONE-WAY veya HEDGE — HEDGE mode ile LONG + SHORT ayni anda
+- Emr tipleri: MARKET, LIMIT, STOP_MARKET, TAKE_PROFIT_MARKET
+
+#### 3. PositionTracker Guncellemesi (`trading/position_tracker.py`)
+- Futures PnL hesabi farkli: `pnl = (exit - entry) * qty * leverage` (LONG icin)
+- Unrealized PnL: Binance API'dan cekerek gercek zamanli guncelleme
+- Liquidation price takibi:
+  - LONG liquidation: `entry_price * (1 - 1/leverage + maintenance_margin_rate)`
+  - SHORT liquidation: `entry_price * (1 + 1/leverage - maintenance_margin_rate)`
+- Funding rate: her 8 saatte bir pozisyon maliyetine eklenmeli
+
+#### 4. RiskManager Guncellemesi (`risk/risk_manager.py`)
+- `leverage` parametresi eklenmeli (1x-10x arasi tavsiye)
+- Pozisyon boyutu hesabi degisir:
+  - Spot: `qty = risk_budget / (price * stop_pct)`
+  - Futures: `qty = (risk_budget * leverage) / (price * stop_pct)`
+  - Ancak max_capital_pct kontrolu MARGIN bazinda yapilmali
+- Liquidation risk kontrolu: SL, liquidation price'dan once olmali
+
+#### 5. KillSwitch Guncellemesi (`risk/kill_switch.py`)
+- Funding rate birikimi de gunluk zarar hesabina dahil edilmeli
+- Liquidation yaklasiminda erken uyari (mesela %50 margin kullaniminda SARI alarm)
+
+#### 6. Yeni: LeverageManager Modulu (`risk/leverage_manager.py`)
+```
+Sorumluluklar:
+- Volatiliteye gore dinamik kaldirac onerisi
+  ADX < 20 (range): max 5x
+  ADX 20-30:        max 3x
+  ADX > 30 (trend): max 2x (trend takibi)
+- ATR tabanlı risk hesabi:
+  safe_leverage = max_risk_per_trade / (atr_pct * stop_mult)
+- Margin kullanim takibi (toplam hesap margini)
+- Liquidation buffer: SL, liquidation'dan en az 2*ATR uzakta olmali
+```
+
+### Kaldırac Seviyeleri (Tavsiye)
+| Piyasa Durumu | Max Kaldirac | Aciklama |
+|---|---|---|
+| Range (ADX<20) | 5x | Dar aralık, tahmin edilebilir |
+| Karisik (ADX 20-30) | 3x | Orta risk |
+| Trend (ADX>30) | 2x | Trend tersine donebilir |
+| Yuksek volatilite | 1x (spot) | ATR anormal yuksekse kaldiracsiz |
+
+### Uygulama Sirasi (Yapilacaklar)
+1. [ ] Binance Futures Testnet hesabi ac + API key al
+2. [ ] `trading/order_manager.py` — Futures emri desteği
+3. [ ] `risk/leverage_manager.py` — yeni modul
+4. [ ] `risk/position_sizer.py` — kaldiracli boyut hesabi
+5. [ ] `trading/position_tracker.py` — Futures PnL + liquidation takibi
+6. [ ] `risk/kill_switch.py` — funding rate + liquidation uyarisi
+7. [ ] `trading/main_loop.py` — leverage parametresi geçişi
+8. [ ] Testnet'te paper mode ile test (gercek para yok)
+9. [ ] Backtest: kaldiraçli strateji performansi karsilastirma
+10. [ ] Canli (gercek Futures) — EN SON
+
+### Onemli Uyarilar
+- Kaldiraç karı da zarar da buyutür: 5x kaldiraç = 20% fiyat düşüşü = %100 kayıp (likidite)
+- Önce 2x ile baslayip test et
+- Funding rate maliyeti (uzun sureli pozisyonlarda birikmektedir)
+- Binance Futures ve Spot API key'leri farklı olabilir
+
