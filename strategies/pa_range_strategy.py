@@ -298,9 +298,10 @@ class PARangeStrategy(BaseStrategy):
             # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
             confidence = min(1.0, confidence + ote_al_bonus)
 
-            # PA-6: Imbalance/GAP → TP hedefi (yoksa klasik hesap)
+            # PA-6/7: TP hedefi — Imbalance > Likidite > Klasik (öncelik sırası)
             imb_tp = self._find_imbalance_tp(df, price, direction="AL")
-            al_tp  = imb_tp if imb_tp else price + (range_width * 0.5)
+            liq_tp = self._find_liquidity_target(df, price, direction="AL")
+            al_tp  = imb_tp or liq_tp or (price + range_width * 0.5)
 
             signal = Signal(
                 action="AL",
@@ -356,9 +357,10 @@ class PARangeStrategy(BaseStrategy):
             # PA-5 OTE Fibonacci bonusu (optimal giris bolgesi)
             confidence = min(1.0, confidence + ote_sat_bonus)
 
-            # PA-6: Imbalance/GAP → TP hedefi (yoksa klasik hesap)
+            # PA-6/7: TP hedefi — Imbalance > Likidite > Klasik (öncelik sırası)
             imb_tp  = self._find_imbalance_tp(df, price, direction="SAT")
-            sat_tp  = imb_tp if imb_tp else price - (range_width * 0.5)
+            liq_tp  = self._find_liquidity_target(df, price, direction="SAT")
+            sat_tp  = imb_tp or liq_tp or (price - range_width * 0.5)
 
             signal = Signal(
                 action="SAT",
@@ -389,6 +391,64 @@ class PARangeStrategy(BaseStrategy):
             )
 
     # ── Yardımcı Metodlar ────────────────────────────────────────────────────
+
+    # ── PA-7: Likidite Tabanlı TP Hedefi ─────────────────────────────────────────
+
+    def _find_liquidity_target(
+        self, df: pd.DataFrame, price: float, direction: str
+    ) -> float | None:
+        """
+        PA-7: Likidite tabanlı TP hedefi.
+
+        Likidite = Swing High/Low noktaları (stop avcılığı bölgesi).
+        Fiyat bu noktalara doğru hareket eder, oradaki stop'ları toplar.
+
+        AL pozisyonu için: fiyatın ÜSTÜNDEKI en yakın Swing High = TP
+        SAT pozisyonu için: fiyatın ALTINDAKİ en yakın Swing Low = TP
+
+        "Equal High/Low" (aynı seviyede birden fazla dokunuş) = çok güçlü likidite.
+
+        Returns:
+            TP hedefi fiyatı veya None
+        """
+        n = self.ms_swing_n
+        if len(df) < n * 2 + 4:
+            return None
+
+        highs = df["high"].values
+        lows  = df["low"].values
+        size  = len(highs)
+        look  = min(size, 60)
+
+        swing_highs = []
+        swing_lows  = []
+
+        for i in range(n, look - n):
+            idx = size - look + i
+            if all(highs[idx] > highs[idx - j] for j in range(1, n + 1)) and \
+               all(highs[idx] > highs[idx + j] for j in range(1, n + 1)):
+                swing_highs.append(float(highs[idx]))
+            if all(lows[idx] < lows[idx - j] for j in range(1, n + 1)) and \
+               all(lows[idx] < lows[idx + j] for j in range(1, n + 1)):
+                swing_lows.append(float(lows[idx]))
+
+        if direction == "AL" and swing_highs:
+            # Fiyatın üstündeki en yakın Swing High = likidite hedefi
+            above = [sh for sh in swing_highs if sh > price]
+            if above:
+                target = min(above)
+                logger.debug(f"PA-7 Likidite TP (AL): {target:,.0f}")
+                return target
+
+        elif direction == "SAT" and swing_lows:
+            # Fiyatın altındaki en yakın Swing Low = likidite hedefi
+            below = [sl for sl in swing_lows if sl < price]
+            if below:
+                target = max(below)
+                logger.debug(f"PA-7 Likidite TP (SAT): {target:,.0f}")
+                return target
+
+        return None
 
     # ── PA-6: Imbalance / GAP Tespiti — TP Hedefi ───────────────────────────────
 
