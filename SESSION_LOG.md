@@ -780,3 +780,32 @@ Sorumluluklar:
 - [ ] Phase 15: Telegram bildirim sistemi
 - [ ] Phase 20: Coklu coin (ETH, SOL)
 - [ ] Phase 23: Kaldirackli trading (Binance Futures)
+
+---
+
+## OTURUM 8 (devam) - 2026-04-06
+
+### Phase 20 - Coklu Coin (MultiCoinBot)
+
+**Tamamlandi** | Commit: 0d8e31f
+
+**Olusturulan Dosyalar:**
+| Dosya | Aciklama |
+|---|---|
+| trading/multi_coin_bot.py | CoinConfig, CoinWorker, MultiCoinBot siniflar |
+| tests/test_phase20.py | 20 test - config, init, state, portfoy, sinyal |
+
+**Teknik Detaylar:**
+- asyncio.gather ile tum coinler paralel tick atar
+- Her coin icin bagimsiz: state dosyasi, risk manager, position tracker, ML model
+- Portfoy sermaye dagitimi: ornek BTC:%50 ETH:%30 SOL:%20
+- State dosyasi: data/bot_state_{SYMBOL}.json
+- ML model oncelik sirasi: ensemble dir -> xgb_symbol -> xgb_btc (fallback)
+
+**Calistirma:**
+    python -m trading.multi_coin_bot                          # BTC+ETH
+    python -m trading.multi_coin_bot --coins BTC/USDT ETH/USDT SOL/USDT
+    python -m trading.multi_coin_bot --weights 0.5 0.3 0.2 --capital 10000
+    python -m trading.multi_coin_bot --once   # bir tur calistir
+
+**Test Sonucu:** 396/396 PASSED (20 yeni, 376 mevcut)
