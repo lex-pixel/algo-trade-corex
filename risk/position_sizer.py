@@ -290,6 +290,49 @@ class PositionSizer:
         )
         return best_qty
 
+    # ── Yontem 4: Kaldiracli Pozisyon ────────────────────────────────────────
+
+    def leveraged(
+        self,
+        capital:        float,
+        price:          float,
+        leverage:       int,
+        margin_pct:     float = 0.02,
+        max_margin_pct: float = 0.10,
+    ) -> float:
+        """
+        Kaldiracli pozisyon icin miktar hesaplar.
+
+        Formul:
+            marjin   = capital * min(margin_pct, max_margin_pct)
+            notional = marjin * leverage
+            quantity = notional / price
+
+        Args:
+            capital       : Toplam sermaye (USDT)
+            price         : Coin fiyati
+            leverage      : Kaldirac katsayisi (2-10)
+            margin_pct    : Ayrilan marjin orani (0.02 = %2)
+            max_margin_pct: Maksimum marjin orani guvenlik limiti
+
+        Returns:
+            Miktar (coin cinsiyle), guvenlik limitleri uygulanmis
+        """
+        if price <= 0 or capital <= 0 or leverage < 1:
+            return 0.0
+
+        safe_margin   = min(margin_pct, max_margin_pct)
+        margin_amount = capital * safe_margin
+        notional      = margin_amount * leverage
+        quantity      = notional / price
+
+        logger.debug(
+            f"Leveraged boyut | marjin:{margin_amount:.2f} USDT | "
+            f"leverage:{leverage}x | notional:{notional:.2f} | qty:{quantity:.6f}"
+        )
+
+        return self._apply_limits(quantity, capital, price)
+
     # ── Guvenlik Limitleri ────────────────────────────────────────────────────
 
     def _apply_limits(

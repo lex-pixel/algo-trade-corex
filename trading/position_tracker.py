@@ -74,6 +74,11 @@ class Position:
     strategy      : str = "unknown"
     entry_fee     : float = 0.0
 
+    # Kaldirac alanlari (Futures icin)
+    leverage          : int   = 1       # 1 = spot, 2-10 = futures
+    liquidation_price : float = 0.0    # Likidite fiyati (leverage>1 ise hesaplanir)
+    margin_mode       : str   = "ISOLATED"  # "ISOLATED" | "CROSS"
+
     # Canli guncellenen alanlar
     current_price : float = 0.0
     unrealized_pnl: float = 0.0
@@ -92,24 +97,53 @@ class Position:
         return self.quantity * self.entry_price
 
     @property
+    def margin(self) -> float:
+        """Pozisyon icin ayrilan marjin (USDT). Spot'ta notional ile aynı."""
+        return self.notional / self.leverage if self.leverage > 1 else self.notional
+
+    @property
+    def is_near_liquidation(self) -> bool:
+        """Fiyat likidite fiyatinin %5'i kadar yaklasti mi?"""
+        if self.leverage <= 1 or self.liquidation_price <= 0:
+            return False
+        if self.direction == "LONG":
+            return self.current_price <= self.liquidation_price * 1.05
+        else:
+            return self.current_price >= self.liquidation_price * 0.95
+
+    @property
     def duration_minutes(self) -> float:
         """Pozisyon kac dakikadir acik?"""
         now = datetime.now(timezone.utc)
         return (now - self.opened_at).total_seconds() / 60
 
     def update_price(self, price: float) -> None:
-        """Fiyat guncellenir ve unrealized P&L hesaplanir."""
+        """Fiyat guncellenir ve unrealized P&L hesaplanir. Kaldiracli pozisyonlarda leverage ile carpilir."""
         self.current_price = price
         if self.direction == "LONG":
-            self.unrealized_pnl = (price - self.entry_price) * self.quantity
+            raw_pnl = (price - self.entry_price) * self.quantity
         else:  # SHORT
-            self.unrealized_pnl = (self.entry_price - price) * self.quantity
+            raw_pnl = (self.entry_price - price) * self.quantity
 
-        self.unrealized_pct = (self.unrealized_pnl / self.notional) * 100
+        # Kaldiracli PnL: marjin bazinda degerlendirilir
+        # Notional = marjin * leverage, PnL raw zaten notional bazli
+        self.unrealized_pnl = raw_pnl
+
+        # Unrealized % marjin uzerinden hesaplanir (daha anlamli)
+        margin = self.margin
+        self.unrealized_pct = (self.unrealized_pnl / margin) * 100 if margin > 0 else 0.0
 
         # En iyi / en kotu noktayi kaydet
         self.max_unrealized = max(self.max_unrealized, self.unrealized_pnl)
         self.min_unrealized = min(self.min_unrealized, self.unrealized_pnl)
+
+        # Likidite yakinlik uyarisi
+        if self.is_near_liquidation:
+            logger.warning(
+                f"[{self.symbol}] LiKiDASYON YAKIN! "
+                f"Fiyat:{price:,.2f} | Liq:{self.liquidation_price:,.2f} | "
+                f"{self.direction} | {self.leverage}x"
+            )
 
     def should_stop_loss(self, price: float) -> bool:
         """Stop-loss tetiklendi mi?"""
@@ -237,6 +271,9 @@ class PositionTracker:
         strategy: str              = "unknown",
         order_id: str | None       = None,
         entry_fee: float           = 0.0,
+        leverage: int              = 1,
+        liquidation_price: float   = 0.0,
+        margin_mode: str           = "ISOLATED",
     ) -> Position | None:
         """
         Yeni pozisyon acar.
@@ -264,17 +301,20 @@ class PositionTracker:
             return None
 
         pos = Position(
-            position_id    = str(uuid.uuid4()),
-            symbol         = symbol,
-            direction      = direction.upper(),
-            entry_price    = entry_price,
-            quantity       = quantity,
-            stop_loss      = stop_loss,
-            take_profit    = take_profit,
-            entry_order_id = order_id,
-            strategy       = strategy,
-            entry_fee      = entry_fee,
-            current_price  = entry_price,
+            position_id       = str(uuid.uuid4()),
+            symbol            = symbol,
+            direction         = direction.upper(),
+            entry_price       = entry_price,
+            quantity          = quantity,
+            stop_loss         = stop_loss,
+            take_profit       = take_profit,
+            entry_order_id    = order_id,
+            strategy          = strategy,
+            entry_fee         = entry_fee,
+            current_price     = entry_price,
+            leverage          = leverage,
+            liquidation_price = liquidation_price,
+            margin_mode       = margin_mode,
         )
 
         # Sermayeyi bloke et
