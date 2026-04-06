@@ -335,6 +335,15 @@ class TradingBot:
         # Onceki oturum varsa yukle
         self.load_state()
 
+        # KillSwitch gun-basi sermayesini gercek sermayeye esitle
+        # Bot yeniden baslatildiginda eski kayip "bugunun zarari" sayilmasin
+        actual_capital = self.position_tracker.capital
+        self.risk_manager.kill_switch.update_day_start(actual_capital)
+        logger.info(
+            f"KillSwitch gun-basi sifirlandi: ${actual_capital:,.2f} "
+            f"(yeniden baslatis - onceki oturum sermayesi)"
+        )
+
         mode = "PAPER" if paper else "LIVE (TESTNET)"
         logger.info(
             f"TradingBot baslatildi | Mod: {mode} | "

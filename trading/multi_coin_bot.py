@@ -129,6 +129,10 @@ class CoinWorker:
         # Onceki state yukle
         self.load_state()
 
+        # KillSwitch gun-basi sifirla (yeniden baslatmada eski kayip bugun sayilmasin)
+        actual_capital = self.position_tracker.capital
+        self.risk_manager.kill_switch.update_day_start(actual_capital)
+
         logger.info(
             f"[{self.symbol}] CoinWorker hazir | "
             f"Sermaye: ${capital:,.2f} | "
