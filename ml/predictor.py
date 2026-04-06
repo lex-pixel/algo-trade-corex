@@ -35,6 +35,7 @@ import pandas as pd
 
 from ml.feature_engineering import FeatureEngineer, LABEL_BUY, LABEL_SELL, LABEL_HOLD
 from ml.xgboost_model import XGBoostModel
+from ml.ensemble_model import EnsembleModel
 from strategies.base_strategy import Signal
 from utils.logger import get_logger
 
@@ -46,13 +47,14 @@ MIN_CONFIDENCE = 0.40
 
 class MLPredictor:
     """
-    Egitilmis XGBoost modelini canli veri uzerinde calistiran yuksek seviye sinif.
+    Egitilmis XGBoost veya Ensemble modelini canli veri uzerinde calistiran sinif.
 
     Ozellikleri:
         - Egitim: train(df) - feature engineering + cv + model egitimi
         - Tahmin: predict(df) -> Signal (strategies ile entegre)
         - Kaydet: save(path)
-        - Yukle: MLPredictor.from_file(path)
+        - Yukle: MLPredictor.from_file(path) veya MLPredictor.from_ensemble(dir)
+        - use_ensemble=True ile XGBoost+LightGBM+RandomForest oylama sistemi
     """
 
     def __init__(
@@ -64,6 +66,7 @@ class MLPredictor:
         min_confidence: float = MIN_CONFIDENCE,
         model_params: dict | None = None,
         n_cv_splits: int = 5,
+        use_ensemble: bool = False,
     ):
         self.symbol         = symbol
         self.timeframe      = timeframe
@@ -71,15 +74,20 @@ class MLPredictor:
         self.threshold_pct  = threshold_pct
         self.min_confidence = min_confidence
         self.n_cv_splits    = n_cv_splits
+        self.use_ensemble   = use_ensemble
 
         self._fe    = FeatureEngineer(
             horizon_bars=horizon_bars,
             threshold_pct=threshold_pct,
         )
-        self._model = XGBoostModel(
-            params=model_params,
-            n_splits=n_cv_splits,
-        )
+        # Ensemble veya tek model sec
+        if use_ensemble:
+            self._model = EnsembleModel(n_splits=n_cv_splits)
+        else:
+            self._model = XGBoostModel(
+                params=model_params,
+                n_splits=n_cv_splits,
+            )
         self._cv_results: dict = {}
 
     # ── Egitim ───────────────────────────────────────────────────────────────
@@ -174,12 +182,13 @@ class MLPredictor:
                 f"BEKLE:{probs[LABEL_HOLD]:.2f} "
                 f"SAT:{probs[LABEL_SELL]:.2f}"
             )
+            model_name = "EnsembleModel (XGB+LGB+RF)" if self.use_ensemble else "XGBoostModel"
             signal = Signal(
                 action      = action,
                 confidence  = round(confidence, 4),
                 stop_loss   = stop_loss,
                 take_profit = take_profit,
-                strategy    = "XGBoostModel",
+                strategy    = model_name,
                 reason      = (
                     f"ML tahmin | {probs_info} | "
                     f"horizon={self.horizon_bars}bar"
@@ -264,7 +273,7 @@ class MLPredictor:
     # ── Kaydet / Yukle ────────────────────────────────────────────────────────
 
     def save(self, path: str | Path) -> None:
-        """Modeli kaydeder."""
+        """Modeli kaydeder. Ensemble ise klasore, XGB ise .json dosyasina."""
         self._model.save(path)
         logger.info(f"MLPredictor modeli kaydedildi: {path}")
 
@@ -275,10 +284,23 @@ class MLPredictor:
         symbol: str = "BTC/USDT",
         timeframe: str = "1h",
     ) -> "MLPredictor":
-        """Kaydedilmis modeli yukler."""
-        instance = cls(symbol=symbol, timeframe=timeframe)
+        """Kaydedilmis XGBoost modelini yukler."""
+        instance = cls(symbol=symbol, timeframe=timeframe, use_ensemble=False)
         instance._model = XGBoostModel.load(path)
-        logger.info(f"MLPredictor yuklendi: {path}")
+        logger.info(f"MLPredictor (XGBoost) yuklendi: {path}")
+        return instance
+
+    @classmethod
+    def from_ensemble(
+        cls,
+        dir_path: str | Path,
+        symbol: str = "BTC/USDT",
+        timeframe: str = "1h",
+    ) -> "MLPredictor":
+        """Kaydedilmis Ensemble modelini yukler."""
+        instance = cls(symbol=symbol, timeframe=timeframe, use_ensemble=True)
+        instance._model = EnsembleModel.load(dir_path)
+        logger.info(f"MLPredictor (Ensemble) yuklendi: {dir_path}")
         return instance
 
     # ── Ozellik Onem Raporu ───────────────────────────────────────────────────
