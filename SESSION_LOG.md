@@ -839,3 +839,39 @@ Sorumluluklar:
 - Sonraki adim: Futures Testnet API key + ccxt binanceusdm()
 
 **Test Sonucu:** 435/435 PASSED (39 yeni, 396 mevcut)
+
+
+---
+
+## OTURUM 9 - 2026-04-07
+
+### Phase 15 - Telegram Bildirim Entegrasyonu
+
+**Tamamlandi**
+
+**Olusturulan/Guncellenen Dosyalar:**
+| Dosya | Aciklama |
+|---|---|
+| trading/main_loop.py (GUNCELLENDI) | TelegramNotifier tam entegrasyon |
+| tests/test_phase15.py (YENI) | 27 test |
+
+**Entegrasyon Noktalari (main_loop.py):**
+- __init__: TelegramNotifier(symbol) olusturuldu
+- Bot baslatildiginda: send_bot_started(capital, paper)
+- Sinyal olusup pozisyon acildiginda: send_signal() + send_position_opened()
+- Pozisyon kapatildiginda: send_stop_loss() / send_take_profit() / send_position_closed()
+- Ust uste 5 hata: send_error() + bot durduruluyor
+- Her 24 tick (24 saat): send_daily_summary()
+- Bot durduğunda: send_bot_stopped(total_pnl, win_rate)
+
+**Notifier Davranisi:**
+- .env'de TELEGRAM_TOKEN + TELEGRAM_CHAT_ID varsa gercek mesaj gonderir
+- Yoksa otomatik dry_run=True -> sessizce loglar, bot etkilenmez
+
+**KURULUM:**
+    # .env dosyasina ekle:
+    TELEGRAM_TOKEN=1234567890:ABC...
+    TELEGRAM_CHAT_ID=-100123456789
+    # @BotFather'dan bot olustur, @userinfobot ile chat_id bul
+
+**Test Sonucu:** 462/462 PASSED (27 yeni, 435 mevcut)

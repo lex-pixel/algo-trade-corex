@@ -44,6 +44,7 @@ from trading.order_manager import OrderManager
 from trading.position_tracker import PositionTracker
 from risk.risk_manager import RiskManager
 from ml.predictor import MLPredictor
+from monitoring.telegram_notifier import TelegramNotifier
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -331,6 +332,10 @@ class TradingBot:
         self._errors         = 0
         self._equity_history = []   # [{ts, equity, price}] — dashboard icin
         self._last_retrain   = 0    # Son retrain'in iteration numarasi
+        self._last_daily_summary = 0  # Gunluk ozet son gondeilen tick
+
+        # Telegram bildirimleri
+        self.notifier = TelegramNotifier(symbol=self.cfg.general.symbol)
 
         # Onceki oturum varsa yukle
         self.load_state()
@@ -351,6 +356,12 @@ class TradingBot:
             f"Sermaye: ${capital:,.2f}"
         )
 
+        # Telegram: bot baslatildi bildirimi
+        self.notifier.send_bot_started(
+            capital=self.position_tracker.capital,
+            paper=paper,
+        )
+
     # ── Ana Dongu ─────────────────────────────────────────────────────────────
 
     async def run(self, once: bool = False) -> None:
@@ -369,6 +380,7 @@ class TradingBot:
                 logger.error(f"Tick hatasi #{self._errors}: {e}")
                 if self._errors >= 5:
                     logger.critical("Ust uste 5 hata! Bot durduruluyor.")
+                    self.notifier.send_error(str(e), context=f"Tick #{self._iteration}, ust uste {self._errors} hata")
                     self._running = False
                     break
 
@@ -380,6 +392,14 @@ class TradingBot:
 
         logger.info("Bot dongusu bitti.")
         self.position_tracker.print_summary()
+
+        # Telegram: bot durduruldu bildirimi
+        pt = self.position_tracker
+        wins  = sum(1 for t in pt._history if t.realized_pnl > 0)
+        total = len(pt._history)
+        wr    = (wins / total * 100) if total > 0 else 0.0
+        total_pnl = sum(t.realized_pnl for t in pt._history)
+        self.notifier.send_bot_stopped(total_pnl=total_pnl, win_rate=wr)
 
     async def _tick(self) -> None:
         """
@@ -540,12 +560,22 @@ class TradingBot:
                     f"(LONG+SHORT ayni anda desteklenir, ayni yon desteklenmez)"
                 )
             else:
+                # Telegram: sinyal bildirimi (pozisyon acilmadan once)
+                self.notifier.send_signal(
+                    action=action, symbol=symbol,
+                    price=current_price, confidence=confidence,
+                    rsi_signal=rsi_sig.action if rsi_sig else "",
+                    pa_signal=pa_sig.action  if pa_sig  else "",
+                )
+
                 # Emir gonder (RiskManager'dan gelen miktar)
                 order = self.order_manager.place_market_order(
                     side          = "buy" if direction == "LONG" else "sell",
                     quantity      = decision.quantity,
                     current_price = current_price,
                 )
+
+                strategy_name = f"RSI+PA+ML ({action})" if self.ml_predictor else f"RSI+PA ({action})"
 
                 # Pozisyon ac (RiskManager'dan gelen SL/TP)
                 self.position_tracker.open_position(
@@ -555,9 +585,19 @@ class TradingBot:
                     quantity    = decision.quantity,
                     stop_loss   = decision.stop_loss,
                     take_profit = decision.take_profit,
-                    strategy    = f"RSI+PA+ML ({action})" if self.ml_predictor else f"RSI+PA ({action})",
+                    strategy    = strategy_name,
                     order_id    = order.order_id,
                     entry_fee   = order.fee,
+                )
+
+                # Telegram: pozisyon acildi bildirimi
+                self.notifier.send_position_opened(
+                    direction=direction, symbol=symbol,
+                    price=order.filled_price or current_price,
+                    quantity=decision.quantity,
+                    stop_loss=decision.stop_loss,
+                    take_profit=decision.take_profit,
+                    strategy=strategy_name,
                 )
 
                 # Kill switch'e islem kaydet
@@ -579,6 +619,21 @@ class TradingBot:
         })
         if len(self._equity_history) > 1000:
             self._equity_history = self._equity_history[-1000:]
+
+        # Gunluk ozet: her 24 tick'te bir (1h bot = 24 saat)
+        ticks_since_summary = self._iteration - self._last_daily_summary
+        if ticks_since_summary >= 24:
+            self._last_daily_summary = self._iteration
+            pt = self.position_tracker
+            day_trades = [t for t in pt._history[-50:]]  # Son 50 islemden gun icini say
+            wins  = sum(1 for t in day_trades if t.realized_pnl > 0)
+            total = len(day_trades)
+            wr    = (wins / total * 100) if total > 0 else 0.0
+            day_pnl = sum(t.realized_pnl for t in day_trades)
+            self.notifier.send_daily_summary(
+                trades=total, pnl=day_pnl,
+                win_rate=wr, capital=summary["equity"],
+            )
 
         # Auto-retrain: her 720 tick'te bir (1h bot = 30 gun) ML modeli yenile
         self._maybe_retrain()
@@ -635,13 +690,39 @@ class TradingBot:
             current_price = price,
         )
 
+        exit_price = order.filled_price or price
+        pnl = (exit_price - pos.entry_price) * pos.quantity
+        if pos.direction == "SHORT":
+            pnl = -pnl
+        pnl -= (pos.entry_fee + order.fee)
+        pnl_pct = (pnl / pos.notional * 100) if pos.notional > 0 else 0.0
+
         # Pozisyon kapat
         self.position_tracker.close_position(
             position_id = position_id,
-            exit_price  = order.filled_price or price,
+            exit_price  = exit_price,
             exit_reason = reason,
             exit_fee    = order.fee,
         )
+
+        # Telegram bildirimi — SL/TP/KILL vs genel kapanma
+        if "STOP" in reason.upper() or "SL" in reason.upper():
+            self.notifier.send_stop_loss(
+                symbol=pos.symbol, price=exit_price,
+                sl_price=pos.stop_loss or exit_price, pnl=pnl,
+            )
+        elif "TAKE" in reason.upper() or "TP" in reason.upper():
+            self.notifier.send_take_profit(
+                symbol=pos.symbol, price=exit_price,
+                tp_price=pos.take_profit or exit_price, pnl=pnl,
+            )
+        else:
+            self.notifier.send_position_closed(
+                direction=pos.direction, symbol=pos.symbol,
+                entry_price=pos.entry_price, exit_price=exit_price,
+                quantity=pos.quantity, realized_pnl=pnl,
+                realized_pct=pnl_pct, exit_reason=reason,
+            )
 
     # ── State Kayit / Yukle ───────────────────────────────────────────────────
 
