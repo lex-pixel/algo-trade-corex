@@ -1,124 +1,89 @@
 # ALGO TRADE CODEX — Yapılacaklar Listesi
 
-Son güncelleme: 2026-03-07 (Oturum 6)
+Son güncelleme: 2026-04-07 (Oturum 9)
 Durum: ✅ Tamamlandı | 🔄 Devam Ediyor | ⏳ Bekliyor | ❌ Engellendi
 
 ---
 
-## PHASE 1 — Altyapı Kurulumu & Python Temelleri
+## TAMAMLANAN FAZLAR
 
-### Tamamlananlar ✅
-- [x] Proje klasör yapısı oluşturuldu (data, strategies, trading, ml, risk, monitoring, tests, config, utils, logs)
-- [x] Her klasöre `__init__.py` eklendi
-- [x] `.gitignore` oluşturuldu (API key, veri, model dosyaları korunuyor)
-- [x] `.env.example` oluşturuldu (Binance/Bybit testnet şablonu)
-- [x] `requirements.txt` oluşturuldu (tüm bağımlılıklar açıklamalı)
-- [x] `strategies/base_strategy.py` — BaseStrategy soyut sınıfı + Signal dataclass
-- [x] `strategies/hello_strategy.py` — İlk test stratejisi (momentum tabanlı)
-- [x] Git başlatıldı, ilk commit atıldı
-- [x] GitHub'a bağlandı ve push edildi → github.com/lex-pixel/algo-trade-corex
-- [x] `SESSION_LOG.md` oluşturuldu (oturum takibi)
+| Faz | Açıklama | Test | Durum |
+|---|---|---|---|
+| Phase 1 | Altyapı, klasör yapısı, git | 24/24 | ✅ |
+| Phase 2 | Veri katmanı — CCXT, fetcher, cleaner | 21/21 | ✅ |
+| Phase 3 | Strateji motoru — RSI, PA Range, regime detector | 26/26 | ✅ |
+| Phase 4 | Backtesting, metrikler, Optuna optimizer | 22/22 | ✅ |
+| Phase 5 | ML/AI — XGBoost 3-sınıf, feature engineering, SHAP | 35/35 | ✅ |
+| Phase 6 | Canlı işlem — OrderManager, PositionTracker, MainLoop | 54/54 | ✅ |
+| Phase 7 | Risk sistemi — PositionSizer, KillSwitch, RiskManager | 52/52 | ✅ |
+| Phase 8 | MTF (4h trend + 15m entry zamanlama) | - | ✅ |
+| Phase 9 | Görsel dashboard — Plotly 6 panel HTML | - | ✅ |
+| Phase 10 | Walk-forward auto-retrain (720 tick / 30 gün) | - | ✅ |
+| Phase 12 | Trailing stop — breakeven + partial close | - | ✅ |
+| Phase 13-14 | SHORT desteği, paper mod iyileştirmeleri | - | ✅ |
+| Phase 15 | Telegram bildirim entegrasyonu (main_loop.py) | 27/27 | ✅ |
+| Phase 16 | Ensemble model — XGBoost + LightGBM + RandomForest | 24/24 | ✅ |
+| Phase 17-21 | Otomatik rapor, dashboard, R:R, walk-forward, SHORT backtest | - | ✅ |
+| Phase 22 | TradingView benzeri canlı mum grafiği (live_chart.py) | - | ✅ |
+| Phase 20 | Multi-coin bot (MultiCoinBot, CoinWorker) | 20/20 | ✅ |
+| Phase 23 | Kaldıraçlı trading (LeverageManager) | 39/39 | ✅ |
+| Fix | KillSwitch yeniden başlatma hatası düzeltildi | - | ✅ |
+| Fix | Test log izolasyonu (conftest.py) | - | ✅ |
 
-### Tamamlananlar (Oturum 2) ✅
-- [x] `utils/logger.py` — loguru tabanlı merkezi log sistemi (terminal + 3 dosya)
-- [x] `strategies/rsi_strategy.py` — RSI Mean Reversion stratejisi (pandas-ta)
-- [x] `tests/test_strategies.py` — 24 unit test, 24/24 PASSED
-
-### Tamamlananlar (Oturum 3) ✅
-- [x] `config/settings.yaml` + `config/loader.py` — pydantic doğrulamalı YAML konfigürasyon
-- [x] `main.py` — gerçek Testnet verisiyle çalışır hale getirildi
-
----
-
-## PHASE 2 — Veri Katmanı ✅
-
-- [x] CCXT kurulumu ve Binance Testnet API bağlantısı
-- [x] `data/fetcher.py` → REST API ile OHLCV verisi çekme (200 gerçek BTC/USDT mumu test edildi)
-- [x] `data/cleaner.py` → Veri temizleme pipeline (NaN, duplikat, anomali, OHLC mantık)
-- [x] `tests/test_fetcher.py` → 21/21 PASSED
-- [ ] `data/ws_listener.py` → WebSocket (Phase 6'ya ertelendi)
-- [ ] TimescaleDB / Redis → (Phase 6'ya ertelendi)
+**Toplam: 462/462 test PASSED**
 
 ---
 
-## PHASE 3 — Strateji ve Sinyal Motoru ✅
+## SIRADAKI GÖREVLER (Öncelik Sırasına Göre)
 
-- [x] `strategies/indicators.py` → RSI, MACD, BB, ATR, ADX merkezi hesaplama
-- [x] `strategies/regime_detector.py` → ADX tabanlı RANGE/TREND/TRANSITION tespiti
-- [x] `strategies/pa_range_strategy.py` → Destek/direnç + RSI + rejim filtresi
-- [x] `strategies/rsi_strategy.py` → RSI Mean Reversion
-- [x] Sinyal kombinasyonu → main.py'de iki strateji kombine ediliyor
-- [x] `config/settings.yaml` + `config/loader.py` → PA Range parametreleri eklendi
-- [x] `tests/test_phase3.py` → 26/26 PASSED (toplam 71/71)
+### 🔥 Yüksek Öncelik
 
----
+- [ ] **Telegram token kurulumu** — `.env` dosyasına `TELEGRAM_TOKEN` ve `TELEGRAM_CHAT_ID` ekle
+  - @BotFather ile bot oluştur → token al
+  - @userinfobot ile chat_id bul
+  - Şu an dry_run=True çalışıyor, gerçek bildirim gitmiyor
 
-## PHASE 4 — Backtesting ve Optimizasyon ✅
+- [ ] **VPS/Server kurulumu** — 7/24 bot çalıştırmak için
+  - Önerilen: DigitalOcean/Hetzner 2GB RAM Ubuntu 22.04 (~$6-12/ay)
+  - Bot kodu git clone ile çekilir
+  - systemd service ile otomatik başlatma
+  - Telegram bildirimleri VPS'ten gelir → PC kapalıyken de bildirim alırsın
 
-- [x] `backtesting/engine.py` → Bar-close olay tabanlı backtest motoru
-- [x] Gerçekçi maliyet modeli → komisyon %0.1 + slipaj %0.05
-- [x] `backtesting/metrics.py` → Sharpe, Sortino, Max Drawdown, Win Rate, Profit Factor
-- [x] `backtesting/run_backtest.py` → RSI vs PA Range karşılaştırması, Parquet cache
-- [x] `optimization/optuna_optimizer.py` → Bayesian parametre optimizasyonu (RSI + PA Range)
-- [x] `dashboard.py` → Rich terminali ile canlı sinyal paneli
-- [x] `tests/test_backtesting.py` → 22/22 PASSED (toplam 93/93)
-- [ ] Monte Carlo simülasyonu → (Phase 8'e ertelendi)
-- [ ] HTML rapor → (Phase 8'e ertelendi)
+### 🟡 Orta Öncelik
 
----
+- [ ] **Binance Futures/Margin API entegrasyonu** (Phase 23 tamamlayıcı)
+  - Şu an kaldıraç hesapları sadece paper modda çalışıyor
+  - Gerçek SHORT/futures emir için `ccxt.binanceusdm()` + futures testnet key gerekiyor
+  - Phase 23'te altyapı hazır, sadece OrderManager güncellenmeli
 
-## PHASE 5 — ML / AI Modeli ✅
+- [ ] **Multi-coin bot aktif kullanımı** (Phase 20 tamamlayıcı)
+  - BTC + ETH + SOL aynı anda çalıştırma testi
+  - Her coin için ayrı Telegram bildirimi
 
-- [x] `ml/feature_engineering.py` → 52 teknik ozellik (lag, rolling, RSI/MACD/BB/ATR/ADX/hacim/momentum)
-- [x] Lookahead bias onlemi → TimeSeriesSplit cross-validation (n_splits=5)
-- [x] `ml/xgboost_model.py` → XGBoost siniflandirici (AL/SAT/BEKLE), SHAP destekli
-- [x] `ml/predictor.py` → canli predict(), ATR tabanli SL/TP, save/load
-- [x] `tests/test_phase5.py` → 35/35 PASSED (toplam 128/128)
-- [ ] MLflow entegrasyonu → (Phase 8'e ertelendi)
-- [ ] A/B test → ML sinyalli vs kural bazli → (Phase 8'e ertelendi)
+- [ ] **CI/CD — GitHub Actions**
+  - Push olunca otomatik `pytest tests/` çalışsın
+  - `.github/workflows/test.yml` dosyası oluştur
 
----
+### 🟢 Düşük Öncelik / Gelecek
 
-## PHASE 6 — Canlı İşlem Altyapısı ✅
-
-- [x] `trading/order_manager.py` → OrderManager: market/limit emir, iptal, simulate_fill, paper mod
-- [x] `trading/position_tracker.py` → PositionTracker: LONG/SHORT pozisyon, SL/TP otomatik, P&L takibi
-- [x] `trading/main_loop.py` → asyncio TradingBot: RSI+PA sinyal birlestirme, paper/live mod, hata yonetimi
-- [x] Paper trading modu → paper=True ile sahte emir, gercek fiyat
-- [x] `monitoring/telegram_notifier.py` → Telegram: AL/SAT/SL/TP/gunluk ozet bildirimleri, dry-run
-- [x] `tests/test_phase6.py` → 54/54 PASSED (toplam 182/182)
-- [ ] 2 hafta paper trading — performans kaydet (canli calistirma gerektirir)
-- [ ] WebSocket canli veri → (Phase 8'e ertelendi)
-
----
-
-## PHASE 7 — Risk Sistemi ✅
-
-- [x] `risk/position_sizer.py` → FixedFraction + ATR + Kelly (Yari Kelly) + Conservative
-- [x] `risk/kill_switch.py` → 3 seviyeli alarm: Sari %3 / Turuncu %5 / Kirmizi %15, drawdown, hata sayaci
-- [x] `risk/risk_manager.py` → Merkezi risk: sinyal degerlendirme, SL/TP, audit log, KillSwitch entegre
-- [x] `tests/test_phase7.py` → 52/52 PASSED (toplam 234/234)
-- [ ] Portfolio korelasyon monitoru → (Phase 8'e ertelendi)
-- [ ] API arizasi protokolu → (Phase 8'e ertelendi)
-- [ ] Sunucu guvenligi (UFW, SSH) → (Deployment asamasinda)
-
----
-
-## PHASE 8 — İzleme, Analiz ve Sürekli İyileştirme (Sürekli)
-
-- [ ] Docker Compose → tüm servisleri ayağa kaldır (bot + DB + Redis + Grafana)
-- [ ] Grafana + Prometheus → canlı P&L, sinyal akışı, API sağlık paneli
-- [ ] Model drift monitörü → Evidently AI
-- [ ] `scripts/weekly_review.py` → haftalık strateji review scripti
-- [ ] Aylık performans raporu otomasyon scripti
-- [ ] Yeni strateji A/B test pipeline
-- [ ] `.github/workflows/main.yml` → CI/CD (GitHub Actions: test + Docker build + deploy)
+- [ ] **Docker Compose** — bot + tüm bağımlılıkları container'a al
+- [ ] **Grafana + Prometheus** — canlı P&L, API sağlık paneli
+- [ ] **WebSocket canlı veri** — REST polling yerine gerçek zamanlı
+- [ ] **Model drift monitörü** — ML modelinin bozulduğunu tespit et (Evidently AI)
+- [ ] **Ensemble model gerçek eğitim** — `python scripts/train_ensemble.py --days 365`
+  - Şu an XGBoost tek model aktif, ensemble sadece test ortamında
+- [ ] **Haftalık otomatik strateji review** scripti
+- [ ] **Live trading geçişi** — testnet → gerçek Binance (EN SON)
+  - `.env`'de `BINANCE_TESTNET=false`
+  - Minimum 2 ay başarılı paper/testnet sonucu şart
 
 ---
 
 ## Notlar
 
-- Borsa: Binance Testnet (sahte para) → live'a geçince `.env`'de `BINANCE_TESTNET=false`
-- Python: 3.12.3 (rapor 3.11 diyor ama 3.12 uyumlu)
+- Borsa: Binance Testnet (sahte para) — live'a geçince `.env`'de `BINANCE_TESTNET=false`
+- Python: `C:\Users\rk209\AppData\Local\Programs\Python\Python312\python.exe`
 - Proje dizini: `C:\Users\rk209\Desktop\Cloud-Algo\`
 - GitHub: github.com/lex-pixel/algo-trade-corex
+- Bot state: `data/bot_state.json` — PC kapansa bile devam eder
+- Açık pozisyon: SHORT @ $71,826 | SL: $70,749 | TP: $68,753 (2026-04-06'dan beri)
