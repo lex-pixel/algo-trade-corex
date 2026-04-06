@@ -746,3 +746,37 @@ Sorumluluklar:
 - Funding rate maliyeti (uzun sureli pozisyonlarda birikmektedir)
 - Binance Futures ve Spot API key'leri farklı olabilir
 
+
+---
+
+## OTURUM 8 - 2026-04-06
+
+### Phase 16 - Ensemble Model (XGBoost + LightGBM + RandomForest)
+
+**Tamamlandi** | Commit: cb7d563
+
+**Olusturulan Dosyalar:**
+| Dosya | Aciklama |
+|---|---|
+| ml/ensemble_model.py | EnsembleModel sinifi - soft-voting, consensus modu, save/load |
+| scripts/train_ensemble.py | Gercek veri ile ensemble egitim scripti |
+| tests/test_phase16.py | 24 test - temel, CV, tahmin, kaydet/yukle, predictor entegrasyon |
+
+**Teknik Detaylar:**
+- Agirliklar: XGBoost=0.40, LightGBM=0.35, RandomForest=0.25
+- Soft-voting: olasilik vektorleri agirlikli ortalama
+- Consensus modu: 2/3 model ayni yonde olmali (varsayilan: ACIK)
+- cv_report() ve model_votes_report() terminal raporlari
+- MLPredictor.from_ensemble(dir) ile yukle
+- lightgbm==4.6.0 kuruldu
+
+**Test Sonucu:** 376/376 PASSED (24 yeni, 352 mevcut)
+
+**Ensemble Egitimi icin:**
+    python scripts/train_ensemble.py --days 365
+    python scripts/train_ensemble.py --days 180 --no-consensus
+
+**Sira:**
+- [ ] Phase 15: Telegram bildirim sistemi
+- [ ] Phase 20: Coklu coin (ETH, SOL)
+- [ ] Phase 23: Kaldirackli trading (Binance Futures)
