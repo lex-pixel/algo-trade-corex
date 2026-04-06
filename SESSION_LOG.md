@@ -875,3 +875,21 @@ Sorumluluklar:
     # @BotFather'dan bot olustur, @userinfobot ile chat_id bul
 
 **Test Sonucu:** 462/462 PASSED (27 yeni, 435 mevcut)
+
+---
+
+## OTURUM 9 (devam) - 2026-04-07
+
+### Log Izolasyonu (conftest.py)
+
+**Tamamlandi**
+
+**Sorun:** Testler calisirken loguru file handler'lari aktif kaliyor, sahte
+KillSwitch KIRMIZI/TURUNCU alarmlari gercek `logs/errors.log` dosyasina yaziliyordu.
+
+**Cozum:** `tests/conftest.py` — pytest baslarken tum loguru file handler'larini
+kaldirir, yalnizca WARNING+ seviyesi terminale yazar.
+
+**Sonuc:** 462/462 test PASSED, errors.log artik test sirasinda buyumüyor.
+
+**Tüm Test Sonucu:** 462/462 PASSED, 137 saniye
