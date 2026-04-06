@@ -809,3 +809,33 @@ Sorumluluklar:
     python -m trading.multi_coin_bot --once   # bir tur calistir
 
 **Test Sonucu:** 396/396 PASSED (20 yeni, 376 mevcut)
+
+---
+
+## OTURUM 8 (devam-2) - 2026-04-06
+
+### Phase 23 - Kaldiracli Trading (LeverageManager)
+
+**Tamamlandi** | Commit: 4698ef8
+
+**Olusturulan/Guncellenen Dosyalar:**
+| Dosya | Aciklama |
+|---|---|
+| risk/leverage_manager.py (YENI) | ADX bazli dinamik kaldirac, likidite buffer, funding rate |
+| risk/position_sizer.py (GUNCELLENDI) | leveraged() metodu eklendi |
+| trading/position_tracker.py (GUNCELLENDI) | leverage, liquidation_price, margin, is_near_liquidation |
+| tests/test_phase23.py | 39 test |
+
+**Teknik Detaylar:**
+- ADX < 20 -> max 5x | ADX 20-30 -> max 3x | ADX > 30 -> max 2x | ATR>%3 -> 1x
+- liquidation_price: LONG=entry*(1-1/lev+mmr), SHORT=entry*(1+1/lev-mmr)
+- is_near_liquidation: liq'e %5 yaklasildiginda True (uyari log)
+- funding_cost(): 8 saatlik periyot bazli maliyet hesabi
+- margin_usage(): acik pozisyonlarin marjin kullanim orani
+- PositionSizer.leveraged(): marjin*leverage/price
+
+**NOT: Binance Futures API entegrasyonu (gercek emir) henuz yapilmadi**
+- Mevcut: paper modda leverage hesaplamalari calisir
+- Sonraki adim: Futures Testnet API key + ccxt binanceusdm()
+
+**Test Sonucu:** 435/435 PASSED (39 yeni, 396 mevcut)
